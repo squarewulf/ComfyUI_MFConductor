@@ -102,12 +102,12 @@ Search for "MF Conductor" in ComfyUI Manager and click Install.
 ### Method 2: Git Clone
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/FriskCinema/MF_Conductor.git
+git clone https://github.com/squarewulf/ComfyUI_MFConductor.git
 ```
 
 ### Method 3: Manual Download
-1. Download the latest release from the [Releases](https://github.com/FriskCinema/MF_Conductor/releases) page
-2. Extract to `ComfyUI/custom_nodes/MF_Conductor`
+1. Download the latest release from the [Releases](https://github.com/squarewulf/ComfyUI_MFConductor) page
+2. Extract to `ComfyUI/custom_nodes/MComfyUI_MFConductor`
 3. Restart ComfyUI
 
 ---
