@@ -1209,8 +1209,12 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=self.directory, **kwargs)
     
     def log_message(self, format, *args):
-        """Custom log format"""
-        print(f"[MF Conductor] {args[0]}")
+        """Custom log format - suppress noisy polling endpoints"""
+        msg = args[0] if args else ''
+        # Skip logging for frequently polled endpoints
+        if '/api/comfy/output' in msg or '/api/comfy/status' in msg:
+            return
+        print(f"[MF Conductor] {msg}")
     
     def send_json(self, data: dict, status: int = 200):
         """Send a JSON response"""
