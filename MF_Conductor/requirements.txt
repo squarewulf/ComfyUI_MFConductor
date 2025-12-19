@@ -1,3 +1,0 @@
-# MF Conductor - Custom Node Manager for ComfyUI
-# Core dependencies (already included with ComfyUI)
-aiohttp>=3.8.0
