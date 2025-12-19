@@ -618,6 +618,9 @@ class MFConductor {
             case 'export':
                 this.exportProfile(profileName);
                 break;
+            case 'quick-launch':
+                this.createProfileShortcut(profileName);
+                break;
             case 'delete':
                 this.confirmDeleteProfile(profileName);
                 break;
@@ -665,6 +668,109 @@ class MFConductor {
             }
         } catch (error) {
             this.showToast('error', this.parseError(error, 'Failed to duplicate profile'));
+        }
+    }
+    
+    async createConductorShortcut() {
+        // Use native file save dialog
+        const savePath = await this.showSaveFileDialog('MF Conductor.lnk');
+        if (!savePath) return; // User cancelled
+        
+        try {
+            this.showToast('info', 'Creating shortcut...');
+            
+            const response = await fetch(`${this.apiBase}/api/shortcuts/conductor`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ save_path: savePath })
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                this.showToast('success', data.message || 'Shortcut created');
+            } else {
+                this.showToast('error', data.message || 'Failed to create shortcut');
+            }
+        } catch (error) {
+            this.showToast('error', this.parseError(error, 'Failed to create shortcut'));
+        }
+    }
+    
+    async createProfileShortcut(profileName) {
+        const profile = this.profiles[profileName];
+        if (!profile) {
+            this.showToast('error', 'Profile not found');
+            return;
+        }
+        
+        // Use native file save dialog
+        const safeName = profileName.replace(/[^a-zA-Z0-9 _-]/g, '').trim();
+        const savePath = await this.showSaveFileDialog(`ComfyUI - ${safeName}.lnk`);
+        if (!savePath) return; // User cancelled
+        
+        try {
+            this.showToast('info', `Creating shortcut for "${profileName}"...`);
+            
+            const response = await fetch(`${this.apiBase}/api/shortcuts/profile`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    profile_name: profileName,
+                    save_path: savePath
+                })
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                this.showToast('success', data.message || `Shortcut created for "${profileName}"`);
+            } else {
+                this.showToast('error', data.message || 'Failed to create shortcut');
+            }
+        } catch (error) {
+            this.showToast('error', this.parseError(error, 'Failed to create shortcut'));
+        }
+    }
+    
+    async showSaveFileDialog(suggestedName) {
+        // Ask backend to show a native Windows save dialog
+        try {
+            const response = await fetch(`${this.apiBase}/api/system/save-dialog`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ suggested_name: suggestedName })
+            });
+            const data = await response.json();
+            
+            if (data.success && data.path) {
+                return data.path;
+            } else if (data.cancelled) {
+                return null;
+            }
+        } catch (e) {
+            console.error('Save dialog error:', e);
+        }
+        
+        // Fallback: use prompt dialog if native dialog fails
+        try {
+            const response = await fetch(`${this.apiBase}/api/system/desktop-path`);
+            const data = await response.json();
+            const defaultPath = data.success ? `${data.path}\\${suggestedName}` : `C:\\Desktop\\${suggestedName}`;
+            
+            return await this.showPrompt({
+                title: 'Save Shortcut',
+                message: 'Enter the full path where you want to save the shortcut:',
+                placeholder: defaultPath,
+                defaultValue: defaultPath,
+                confirmText: 'Create'
+            });
+        } catch (e) {
+            return await this.showPrompt({
+                title: 'Save Shortcut',
+                message: 'Enter the full path where you want to save the shortcut:',
+                placeholder: `C:\\Users\\Desktop\\${suggestedName}`,
+                defaultValue: `C:\\Users\\Desktop\\${suggestedName}`,
+                confirmText: 'Create'
+            });
         }
     }
     
@@ -2078,6 +2184,7 @@ class MFConductor {
         const launchBtn = document.getElementById('launch-comfy-btn');
         const restartBtn = document.getElementById('restart-comfy-btn');
         const stopBtn = document.getElementById('stop-comfy-btn');
+        const statusEl = document.getElementById('comfy-status');
         
         // Find default profile
         this.defaultProfile = null;
@@ -2091,7 +2198,23 @@ class MFConductor {
         const isRunning = this.comfyStatus === 'running';
         const isStarting = this.comfyStatus === 'starting';
         const isManaged = this.comfyManaged !== false;
-        const serverReady = this.comfyServerReady; // Only true when HTTP server actually responds
+        const serverReady = this.comfyServerReady;
+        const isIntegrated = this.apiBase === '/mf_conductor';
+        
+        // In integrated mode, hide launch button and status indicator
+        if (isIntegrated) {
+            if (launchBtn) launchBtn.style.display = 'none';
+            if (statusEl) statusEl.style.display = 'none';
+            if (restartBtn) restartBtn.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'none';
+            return;
+        }
+        
+        // Standalone mode - show all controls
+        if (launchBtn) launchBtn.style.display = '';
+        if (statusEl) statusEl.style.display = '';
+        if (restartBtn) restartBtn.style.display = '';
+        if (stopBtn) stopBtn.style.display = '';
         
         // Update launch button - transforms to "Go To Comfy" only when server is actually ready
         if (launchBtn) {
@@ -4511,6 +4634,85 @@ class MFConductor {
             
             // Focus OK button
             okBtn.focus();
+        });
+    }
+    
+    showPrompt(options = {}) {
+        return new Promise((resolve) => {
+            const {
+                title = 'Enter Value',
+                message = 'Please enter a value:',
+                placeholder = '',
+                defaultValue = '',
+                confirmText = 'OK',
+                cancelText = 'Cancel'
+            } = options;
+            
+            const modal = document.getElementById('prompt-modal');
+            const titleEl = document.getElementById('prompt-title');
+            const messageEl = document.getElementById('prompt-message');
+            const inputEl = document.getElementById('prompt-input');
+            const okBtn = document.getElementById('prompt-ok-btn');
+            const cancelBtn = document.getElementById('prompt-cancel-btn');
+            
+            if (!modal) {
+                // Fallback to native prompt if modal not found
+                resolve(prompt(message, defaultValue));
+                return;
+            }
+            
+            // Set content
+            titleEl.textContent = title;
+            messageEl.textContent = message;
+            inputEl.placeholder = placeholder;
+            inputEl.value = defaultValue;
+            okBtn.textContent = confirmText;
+            cancelBtn.textContent = cancelText;
+            
+            // Show modal
+            modal.style.display = 'flex';
+            
+            // Handle clicks
+            const handleOk = () => {
+                cleanup();
+                resolve(inputEl.value);
+            };
+            
+            const handleCancel = () => {
+                cleanup();
+                resolve(null);
+            };
+            
+            const handleOverlay = (e) => {
+                if (e.target === modal) {
+                    handleCancel();
+                }
+            };
+            
+            const handleKeydown = (e) => {
+                if (e.key === 'Escape') {
+                    handleCancel();
+                } else if (e.key === 'Enter') {
+                    handleOk();
+                }
+            };
+            
+            const cleanup = () => {
+                modal.style.display = 'none';
+                okBtn.removeEventListener('click', handleOk);
+                cancelBtn.removeEventListener('click', handleCancel);
+                modal.removeEventListener('click', handleOverlay);
+                document.removeEventListener('keydown', handleKeydown);
+            };
+            
+            okBtn.addEventListener('click', handleOk);
+            cancelBtn.addEventListener('click', handleCancel);
+            modal.addEventListener('click', handleOverlay);
+            document.addEventListener('keydown', handleKeydown);
+            
+            // Focus input and select all
+            inputEl.focus();
+            inputEl.select();
         });
     }
     

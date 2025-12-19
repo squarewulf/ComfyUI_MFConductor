@@ -5,9 +5,18 @@ All notable changes to MF Conductor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - 2025-12-18
+## [1.1.0] - 2025-12-19
 
 ### Added
+- **Profile Quick Launch Shortcuts**: Create Windows shortcuts that launch ComfyUI with a specific profile
+  - Right-click any profile → "Create Quick Launch"
+  - Shortcuts apply node enable/disable states before launching
+  - Shortcuts include all profile flags (VRAM, attention, custom flags)
+  - Native Windows save dialog for choosing shortcut location
+  - Shortcuts use MF Conductor icon
+- **MF Conductor Shortcut**: Create a shortcut to launch MF Conductor standalone
+  - Settings → Shortcuts → "Create Shortcut"
+  - Native save dialog for custom placement
 - **Profile Export/Import**: Share profiles with others via JSON files
 - **System Theme Sync**: Automatically match OS light/dark theme preference
 - **Undo for Node Removal**: Undo accidental node deletions (for git-based nodes)
@@ -20,10 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Improved
 - **Performance**: Debounced search inputs reduce unnecessary filtering
-- **Settings**: Added "Sync with system theme" toggle
+- **Settings**: Added "Sync with system theme" toggle and Shortcuts section
 - **Profiles Toolbar**: Quick import button and profile count display
+- **Integrated Mode**: Removed unnecessary controls (Go to Comfy button, status indicator)
 
 ### Fixed
+- Profile shortcuts now correctly apply node enable/disable states
+- Profile shortcuts now correctly pass all launch flags
+- Fixed nodes_cache.json saving to wrong directory
+- Fixed console panel positioning and collapse behavior
 - Date in changelog corrected to 2025
 
 ## [1.0.0] - 2025-12-18

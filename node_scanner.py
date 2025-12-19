@@ -1082,7 +1082,8 @@ class NodeScanner:
             self.custom_nodes_path = self._find_custom_nodes_path()
         
         self.nodes: List[CustomNode] = []
-        self._cache_file = self.custom_nodes_path / 'ComfyUI_MFConductor' / 'nodes_cache.json'
+        # Save cache directly in this module's directory
+        self._cache_file = Path(__file__).parent / 'nodes_cache.json'
     
     def _find_custom_nodes_path(self) -> Path:
         """Find the custom_nodes directory"""
