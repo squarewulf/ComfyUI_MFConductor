@@ -24,21 +24,21 @@ Take complete control of your ComfyUI environment. Profile - based launching, su
 </strong>
 </p>
 
- -  -  - 
+---
 
 ## Overview
 
-| | |
-| -  -  - | -  -  - |
-| **Type** | Web - based application (local server + browser UI) |
+| Property | Details |
+|----------|---------|
+| **Type** | Web-based application (local server + browser UI) |
 | **Backend** | Python 3.10+ (uses `http.server` standalone, `aiohttp` integrated) |
 | **Frontend** | Vanilla JavaScript, HTML, CSS (no build step required) |
-| **Platform** | **Windows** (full support), **Linux/macOS** (core features work, shortcuts are Windows - only) |
+| **Platform** | **Windows** (full support), **Linux/macOS** (core features work, shortcuts are Windows-only) |
 | **Dependencies** | Git (for node management), Python packages listed in `requirements.txt` |
 
 MF Conductor runs as a local web server on port `8199` (standalone) or integrates directly into ComfyUI's existing server on port `8188`. Open your browser to interact with the UI - there is no native desktop app.
 
- -  -  - 
+---
 
 ## Screenshots
 
@@ -57,7 +57,7 @@ MF Conductor runs as a local web server on port `8199` (standalone) or integrate
 <br><em>Profile Editor  -  Select enabled/excluded nodes per profile</em>
 </p>
 
- -  -  - 
+---
 
 ## ⬢ Features
 
@@ -89,7 +89,7 @@ Real - time process control and monitoring.
 * **Process Control**  -  Start, Stop, and Restart the ComfyUI server.
 * **Status Indicators**  -  Visual feedback for server state (Initializing, Running, Stopped).
 
- -  -  - 
+---
 
 ## ⭳ Installation
 
@@ -113,7 +113,7 @@ git clone https://github.com/squarewulf/ComfyUI_MFConductor.git
 2. Extract to `ComfyUI/custom_nodes/ComfyUI_MFConductor`.
 3. Restart ComfyUI.
 
- -  -  - 
+---
 
 ## ➤ Usage
 
@@ -144,7 +144,7 @@ http://localhost:8188/mf_conductor/
 
 ```
 
- -  -  - 
+---
 
 ## ⚙ Profiles
 
@@ -153,7 +153,7 @@ Profiles define the state of the ComfyUI runtime.
 ### Included Presets
 
 | Profile | Target Hardware | Description |
-|  -  -  -  |  -  -  -  |  -  -  -  |
+| --- | --- | --- |
 | **GPU Standard** | Most GPUs | Balanced configuration. |
 | **GPU High VRAM** | 16GB+ | Maximizes caching and performance. |
 | **GPU Low VRAM** | 6 - 8GB | Optimizes VRAM usage (` -  - lowvram`). |
@@ -170,14 +170,14 @@ When a profile is launched, MF Conductor performs the following operations:
 
 > **Note:** This renaming mechanism is fully compatible with ComfyUI - Manager.
 
- -  -  - 
+---
 
 ## ⌨ Shortcuts
 
 Efficiently navigate the interface using keyboard commands.
 
 | Key | Function |
-|  -  -  -  |  -  -  -  |
+| --- | --- |
 | <kbd>/</kbd> | Focus Search Field |
 | <kbd>R</kbd> | Refresh Node List |
 | <kbd>N</kbd> | Open Install Modal |
@@ -185,7 +185,7 @@ Efficiently navigate the interface using keyboard commands.
 | <kbd>U</kbd> | Check for Updates |
 | <kbd>Esc</kbd> | Close Active Modal |
 
- -  -  - 
+---
 
 ## ℹ Technical Details
 
@@ -221,7 +221,7 @@ This is typically a Windows CLI encoding issue. It does not affect functionality
 
 </details>
 
- -  -  - 
+---
 
 <p align="center">
 <strong>Powered by <a href="[https://friskcinema.com](https://friskcinema.com)">FriskCinema</a></strong>
