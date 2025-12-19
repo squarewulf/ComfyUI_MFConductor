@@ -1220,7 +1220,7 @@ class MFConductor {
         const availFilterLower = availFilter.toLowerCase();
         const selectedFilterLower = selectedFilter.toLowerCase();
         
-        // Available nodes (not in profile)
+        // Excluded nodes (not in profile)
         const available = this.nodes.filter(n => 
             !this.profileSelectedNodes.has(n.folder_name) &&
             (!availFilter || n.display_name.toLowerCase().includes(availFilterLower) || n.folder_name.toLowerCase().includes(availFilterLower))
