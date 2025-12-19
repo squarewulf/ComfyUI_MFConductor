@@ -26,25 +26,6 @@ Take complete control of your ComfyUI environment. Profile-based launching, surg
 
 ---
 
-## Screenshots
-
-<p align="center">
-<img src="web/screenshots/profiles.png" alt="Profiles Tab" width="800">
-<br><em>Profiles Tab - Manage multiple ComfyUI configurations</em>
-</p>
-
-<p align="center">
-<img src="web/screenshots/nodes.png" alt="Nodes Tab" width="800">
-<br><em>Nodes Tab - View, search, and manage custom nodes</em>
-</p>
-
-<p align="center">
-<img src="web/screenshots/profile-editor.png" alt="Profile Editor" width="800">
-<br><em>Profile Editor - Select enabled/excluded nodes per profile</em>
-</p>
-
----
-
 ## ⬢ Features
 
 ### ❖ Profile System
