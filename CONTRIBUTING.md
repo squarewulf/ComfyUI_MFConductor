@@ -22,7 +22,7 @@ Thank you for your interest in contributing to MF Conductor! This document provi
 
 **Standalone Mode:**
 ```bash
-cd ComfyUI/custom_nodes/MF_Conductor
+cd ComfyUI/custom_nodes/ComfyUI_MFConductor
 python standalone_server.py
 ```
 
@@ -45,7 +45,7 @@ Simply start ComfyUI - MF Conductor will register its routes automatically.
 ## Project Structure
 
 ```
-MF_Conductor/
+ComfyUI_MFConductor/
 ├── __init__.py           # ComfyUI integration & API routes
 ├── standalone_server.py  # Standalone HTTP server
 ├── node_scanner.py       # Node discovery and metadata

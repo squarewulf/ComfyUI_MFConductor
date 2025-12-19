@@ -709,7 +709,7 @@ class MFConductorAPI:
                     })
         
         # Find ComfyUI paths
-        comfy_root = Path(__file__).parent.parent.parent  # custom_nodes/MF_Conductor -> ComfyUI
+        comfy_root = Path(__file__).parent.parent.parent  # custom_nodes/ComfyUI_MFConductor -> ComfyUI
         portable_root = comfy_root.parent  # ComfyUI -> ComfyUI_windows_portable
         
         # Find Python executable - check multiple locations

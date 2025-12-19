@@ -2,7 +2,7 @@
  * MF Conductor - Custom Node Manager
  * Frontend Application
  * 
- * @version 1.0.0
+ * @version 1.1.0
  * @author FriskCinema
  */
 
@@ -408,6 +408,10 @@ class MFConductor {
         } else if (tabName === 'profiles') {
             this.renderProfilesGrid();
         } else if (tabName === 'console') {
+            // Update console placeholder if running externally/integrated
+            if (this.comfyStatus === 'running' && !this.comfyManaged) {
+                this.showExternalComfyMessage(this.comfyPort);
+            }
             this.scrollConsoleToBottom();
         }
     }
@@ -2227,22 +2231,73 @@ class MFConductor {
                     this.checkComfyServerReady();
                 }
                 
-                // Update console placeholder if running externally
+                // Update console placeholder based on status
                 if (data.status === 'running' && data.managed === false) {
                     this.showExternalComfyMessage(data.port);
+                } else if (data.status === 'stopped') {
+                    this.showStoppedMessage();
                 }
             }
         } catch (error) {
             console.error('Error checking ComfyUI status:', error);
+            // Show stopped message on error (couldn't reach API)
+            this.showStoppedMessage();
         }
+    }
+    
+    showStoppedMessage() {
+        const output = document.getElementById('console-output');
+        if (!output) return;
+        
+        let placeholder = output.querySelector('.console-placeholder');
+        if (!placeholder) {
+            placeholder = document.createElement('div');
+            placeholder.className = 'console-placeholder';
+            output.innerHTML = '';
+            output.appendChild(placeholder);
+        }
+        
+        placeholder.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+                <polyline points="4 17 10 11 4 5"/>
+                <line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+            <p>ComfyUI is not running</p>
+            <p class="console-placeholder-hint">Click "Launch ComfyUI" to start</p>
+        `;
     }
     
     showExternalComfyMessage(port) {
         const output = document.getElementById('console-output');
         if (!output) return;
         
-        const placeholder = output.querySelector('.console-placeholder');
-        if (placeholder) {
+        // Check if we're in integrated mode (running inside ComfyUI)
+        const isIntegratedMode = this.apiBase === '/mf_conductor';
+        
+        let placeholder = output.querySelector('.console-placeholder');
+        
+        // Create placeholder if it doesn't exist
+        if (!placeholder) {
+            placeholder = document.createElement('div');
+            placeholder.className = 'console-placeholder';
+            output.innerHTML = '';
+            output.appendChild(placeholder);
+        }
+        
+        if (isIntegratedMode) {
+            placeholder.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <p>Running in Integrated Mode</p>
+                <p class="console-placeholder-hint">Console output is only available when using Standalone Mode.<br>
+                To use console features, close ComfyUI and run <code>Launch_MFConductor.bat</code></p>
+                <p class="console-placeholder-hint" style="margin-top: 12px;">
+                    <strong>Command input below still works</strong> - you can run pip commands in the ComfyUI environment.
+                </p>
+            `;
+        } else {
             placeholder.innerHTML = `
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
                     <polyline points="4 17 10 11 4 5"/>
@@ -2616,7 +2671,7 @@ class MFConductor {
         // Toast container
         this.toastContainer = document.getElementById('toast-container');
         
-        // Console panel
+        // Console panel (bottom)
         this.consolePanel = document.getElementById('console-panel');
         this.consoleHeader = document.getElementById('console-header');
         this.consoleToggle = document.getElementById('console-toggle');
@@ -2624,7 +2679,9 @@ class MFConductor {
         this.consoleBody = document.getElementById('console-body');
         this.consoleContent = document.getElementById('console-content');
         this.consoleBadge = document.getElementById('console-badge');
+        this.consoleResizeHandle = document.getElementById('console-resize-handle');
         this.logCount = 0;
+        this.consoleHeight = parseInt(localStorage.getItem('mfc_console_height')) || 300;
         
         // Footer
         this.scanTimeEl = document.getElementById('scan-time');
@@ -2740,7 +2797,7 @@ class MFConductor {
             this.detailRemove.addEventListener('click', () => this.removeSelectedNode());
         }
         
-        // Console panel
+        // Console panel (bottom)
         this.consoleHeader.addEventListener('click', (e) => {
             // Don't toggle if clicking on action buttons
             if (e.target.closest('.console-actions')) return;
@@ -2754,6 +2811,9 @@ class MFConductor {
             e.stopPropagation();
             this.clearConsole();
         });
+        
+        // Console panel resize handle
+        this.initConsoleResizer();
         
         // Resizer for expanded detail grid - using event delegation
         this.initDetailResizer();
@@ -4498,9 +4558,78 @@ class MFConductor {
     }
     
     toggleConsole() {
-        this.consolePanel.classList.toggle('collapsed');
-        // Toggle body class for footer/content adjustment
-        document.body.classList.toggle('console-expanded', !this.consolePanel.classList.contains('collapsed'));
+        const isCollapsed = this.consolePanel.classList.toggle('collapsed');
+        
+        // Apply saved height when expanding
+        if (!isCollapsed && this.consoleBody) {
+            this.consoleBody.style.height = `${this.consoleHeight}px`;
+        }
+    }
+    
+    initConsoleResizer() {
+        if (!this.consoleResizeHandle || !this.consoleBody) return;
+        
+        // Apply initial height
+        this.consoleBody.style.height = `${this.consoleHeight}px`;
+        
+        let startY = 0;
+        let startHeight = 0;
+        let isResizing = false;
+        
+        const onMouseDown = (e) => {
+            if (this.consolePanel.classList.contains('collapsed')) return;
+            
+            isResizing = true;
+            startY = e.clientY;
+            startHeight = this.consoleBody.offsetHeight;
+            
+            this.consolePanel.classList.add('resizing');
+            document.body.style.cursor = 'ns-resize';
+            document.body.style.userSelect = 'none';
+            
+            e.preventDefault();
+        };
+        
+        const onMouseMove = (e) => {
+            if (!isResizing) return;
+            
+            const deltaY = startY - e.clientY;
+            const newHeight = Math.min(Math.max(startHeight + deltaY, 100), window.innerHeight * 0.7);
+            
+            this.consoleBody.style.height = `${newHeight}px`;
+            this.consoleHeight = newHeight;
+        };
+        
+        const onMouseUp = () => {
+            if (!isResizing) return;
+            
+            isResizing = false;
+            this.consolePanel.classList.remove('resizing');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            
+            // Save the height preference
+            localStorage.setItem('mfc_console_height', this.consoleHeight.toString());
+        };
+        
+        this.consoleResizeHandle.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        
+        // Touch support for mobile/tablets
+        this.consoleResizeHandle.addEventListener('touchstart', (e) => {
+            if (this.consolePanel.classList.contains('collapsed')) return;
+            const touch = e.touches[0];
+            onMouseDown({ clientY: touch.clientY, preventDefault: () => {} });
+        });
+        
+        document.addEventListener('touchmove', (e) => {
+            if (!isResizing) return;
+            const touch = e.touches[0];
+            onMouseMove({ clientY: touch.clientY });
+        });
+        
+        document.addEventListener('touchend', onMouseUp);
     }
     
     clearConsole() {

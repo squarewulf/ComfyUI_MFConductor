@@ -1143,6 +1143,92 @@ try:
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
     
+    # ==================== COMFYUI STATUS (INTEGRATED MODE) ====================
+    
+    @routes.get('/mf_conductor/api/comfy/status')
+    async def _mnf_comfy_status(request):
+        """In integrated mode, ComfyUI is always running (since it's serving this page)"""
+        return web.json_response({
+            'success': True,
+            'status': 'running',
+            'managed': False,
+            'port': 8188
+        })
+    
+    @routes.get('/mf_conductor/api/comfy/output')
+    async def _mnf_comfy_output(request):
+        """Console output not available in integrated mode"""
+        return web.json_response({
+            'success': True,
+            'output': [],
+            'status': 'running'
+        })
+    
+    @routes.post('/mf_conductor/api/comfy/launch')
+    async def _mnf_comfy_launch(request):
+        """Cannot launch ComfyUI from integrated mode (it's already running)"""
+        return web.json_response({
+            'success': False,
+            'message': 'ComfyUI is already running. Use standalone mode to control ComfyUI launching.'
+        })
+    
+    @routes.post('/mf_conductor/api/comfy/stop')
+    async def _mnf_comfy_stop(request):
+        """Cannot stop ComfyUI from integrated mode"""
+        return web.json_response({
+            'success': False,
+            'message': 'Cannot stop ComfyUI from within ComfyUI. Use standalone mode for process control.'
+        })
+    
+    @routes.post('/mf_conductor/api/comfy/restart')
+    async def _mnf_comfy_restart(request):
+        """Cannot restart ComfyUI from integrated mode"""
+        return web.json_response({
+            'success': False,
+            'message': 'Cannot restart ComfyUI from within ComfyUI. Use standalone mode for process control.'
+        })
+    
+    @routes.post('/mf_conductor/api/comfy/run-command')
+    async def _mnf_comfy_run_command(request):
+        """Run a pip/python command"""
+        try:
+            import asyncio
+            data = await request.json()
+            command = data.get('command', '')
+            
+            if not command:
+                return web.json_response({'success': False, 'message': 'Command is required'}, status=400)
+            
+            # Find Python executable
+            comfy_root = Path(__file__).parent.parent.parent
+            portable_root = comfy_root.parent
+            
+            python_path = portable_root / 'python_embeded' / 'python.exe'
+            if not python_path.exists():
+                python_path = Path(sys.executable)
+            
+            cmd_parts = command.split()
+            
+            proc = await asyncio.create_subprocess_exec(
+                str(python_path), '-m', *cmd_parts,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(comfy_root)
+            )
+            
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            
+            return web.json_response({
+                'success': True,
+                'output': stdout.decode('utf-8', errors='replace') if stdout else None,
+                'error': stderr.decode('utf-8', errors='replace') if stderr else None,
+                'return_code': proc.returncode
+            })
+        except asyncio.TimeoutError:
+            return web.json_response({'success': False, 'message': 'Command timed out after 120 seconds'})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
     # Serve static files from web directory
     @routes.get('/mf_conductor/{filename:.*}')
     async def _mnf_serve_static(request):
