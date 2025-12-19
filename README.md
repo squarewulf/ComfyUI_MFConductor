@@ -224,5 +224,7 @@ This is typically a Windows CLI encoding issue. It does not affect functionality
 ---
 
 <p align="center">
-<strong>Powered by <a href="[https://friskcinema.com](https://friskcinema.com)">FriskCinema</a></strong>
+<img src="web/mflogo.webp" alt="MediaFrisk" width="120">
+<br>
+<strong>Powered by <a href="https://friskcinema.com">FriskCinema</a></strong>
 </p>
