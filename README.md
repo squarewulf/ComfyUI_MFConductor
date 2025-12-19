@@ -106,8 +106,8 @@ git clone https://github.com/squarewulf/ComfyUI_MFConductor.git
 ```
 
 ### Method 3: Manual Download
-1. Download the latest release from the [Releases](https://github.com/squarewulf/ComfyUI_MFConductor) page
-2. Extract to `ComfyUI/custom_nodes/MComfyUI_MFConductor`
+1. Download the latest release from the [Releases](https://github.com/squarewulf/ComfyUI_MFConductor/releases) page
+2. Extract to `ComfyUI/custom_nodes/MF_Conductor`
 3. Restart ComfyUI
 
 ---
