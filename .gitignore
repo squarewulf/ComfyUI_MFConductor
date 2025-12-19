@@ -1,0 +1,16 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Node cache (auto-regenerated)
+nodes_cache.json
+
+# Generated launcher scripts (user-specific)
+data/launch_*.py
+data/launch_*.bat
+
+# IDE
+.vscode/
+.idea/
+

@@ -6,14 +6,14 @@
     "disabled": [],
     "flags": {
       "vram": "",
-      "attention": "--use-sage-attention"
+      "attention": ""
     },
     "custom_flags": "",
     "custom_flags_list": [],
     "excluded_packages": [],
     "is_default": true,
-    "created": "2025-12-19T02:46:28.447292",
-    "updated": "2025-12-19T02:46:28.447292"
+    "created": "2025-01-01T00:00:00.000000",
+    "updated": "2025-01-01T00:00:00.000000"
   },
   "GPU - Low VRAM": {
     "description": "For GPUs with 4-6GB VRAM. Uses memory-efficient settings",
@@ -22,14 +22,14 @@
     "disabled": [],
     "flags": {
       "vram": "--lowvram",
-      "attention": "--use-sage-attention"
+      "attention": ""
     },
     "custom_flags": "",
     "custom_flags_list": [],
     "excluded_packages": [],
     "is_default": false,
-    "created": "2025-12-19T02:46:28.447292",
-    "updated": "2025-12-19T02:46:28.447292"
+    "created": "2025-01-01T00:00:00.000000",
+    "updated": "2025-01-01T00:00:00.000000"
   },
   "GPU - Very Low VRAM": {
     "description": "For GPUs with 2-4GB VRAM. Maximum memory savings",
@@ -44,8 +44,8 @@
     "custom_flags_list": [],
     "excluded_packages": [],
     "is_default": false,
-    "created": "2025-12-19T02:46:28.447292",
-    "updated": "2025-12-19T02:46:28.447292"
+    "created": "2025-01-01T00:00:00.000000",
+    "updated": "2025-01-01T00:00:00.000000"
   },
   "GPU - High VRAM": {
     "description": "For GPUs with 12GB+ VRAM. Maximum performance",
@@ -54,14 +54,14 @@
     "disabled": [],
     "flags": {
       "vram": "--highvram",
-      "attention": "--use-sage-attention"
+      "attention": ""
     },
     "custom_flags": "",
     "custom_flags_list": [],
     "excluded_packages": [],
     "is_default": false,
-    "created": "2025-12-19T02:46:28.447292",
-    "updated": "2025-12-19T02:46:28.447292"
+    "created": "2025-01-01T00:00:00.000000",
+    "updated": "2025-01-01T00:00:00.000000"
   },
   "CPU Only": {
     "description": "Run entirely on CPU. Slow but works without a GPU",
@@ -76,8 +76,8 @@
     "custom_flags_list": [],
     "excluded_packages": [],
     "is_default": false,
-    "created": "2025-12-19T02:46:28.447292",
-    "updated": "2025-12-19T02:46:28.447292"
+    "created": "2025-01-01T00:00:00.000000",
+    "updated": "2025-01-01T00:00:00.000000"
   },
   "DirectML (AMD/Intel)": {
     "description": "For AMD and Intel GPUs using DirectML backend",
@@ -92,8 +92,8 @@
     "custom_flags_list": [],
     "excluded_packages": [],
     "is_default": false,
-    "created": "2025-12-19T02:46:28.447292",
-    "updated": "2025-12-19T02:46:28.447292"
+    "created": "2025-01-01T00:00:00.000000",
+    "updated": "2025-01-01T00:00:00.000000"
   },
   "Preview Mode": {
     "description": "Fast preview generation with lower quality settings",
@@ -103,13 +103,13 @@
     "flags": {
       "vram": "--lowvram",
       "preview": "--preview-method auto",
-      "attention": "--use-sage-attention"
+      "attention": ""
     },
     "custom_flags": "",
     "custom_flags_list": [],
     "excluded_packages": [],
     "is_default": false,
-    "created": "2025-12-19T02:46:28.447292",
-    "updated": "2025-12-19T02:46:28.447292"
+    "created": "2025-01-01T00:00:00.000000",
+    "updated": "2025-01-01T00:00:00.000000"
   }
 }
