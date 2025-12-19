@@ -26,6 +26,20 @@ Take complete control of your ComfyUI environment. Profile-based launching, surg
 
 ---
 
+## Overview
+
+| | |
+|---|---|
+| **Type** | Web-based application (local server + browser UI) |
+| **Backend** | Python 3.10+ (uses `http.server` standalone, `aiohttp` integrated) |
+| **Frontend** | Vanilla JavaScript, HTML, CSS (no build step required) |
+| **Platform** | **Windows** (full support), **Linux/macOS** (core features work, shortcuts are Windows-only) |
+| **Dependencies** | Git (for node management), Python packages listed in `requirements.txt` |
+
+MF Conductor runs as a local web server on port `8199` (standalone) or integrates directly into ComfyUI's existing server on port `8188`. Open your browser to interact with the UI—there is no native desktop app.
+
+---
+
 ## Screenshots
 
 <p align="center">
@@ -55,7 +69,7 @@ The core of the application. Manage launch configurations that control every asp
 * **Context Isolation** — Select exactly which custom nodes are active per profile.
 * **Launch Flags** — Configure VRAM limits (`--lowvram`), attention modes, and preview methods visually.
 * **Package Exclusion** — Prevent specific Python packages from loading to avoid conflicts.
-* **Desktop Shortcuts** — Generate Windows shortcuts to launch specific profiles directly from your desktop.
+* **Desktop Shortcuts** — Generate Windows shortcuts (`.lnk`) to launch specific profiles directly from your desktop. *(Windows only)*
 
 ### ❖ Node Management
 
