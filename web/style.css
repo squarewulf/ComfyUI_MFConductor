@@ -3270,32 +3270,72 @@ body {
     opacity: 0.5;
 }
 
-/* Console Panel - Sticky at bottom */
+/* Console Panel - Below footer */
 .console-panel {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    position: relative;
     background: var(--bg-secondary);
     border-top: 1px solid var(--border-color);
-    z-index: 200;
-    transition: all var(--transition-normal);
-    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
 }
 
 .console-panel.collapsed .console-body {
-    max-height: 0;
+    height: 0 !important;
+    min-height: 0 !important;
     padding: 0;
     overflow: hidden;
+}
+
+.console-panel.collapsed .console-resize-handle {
+    display: none;
 }
 
 .console-panel.collapsed .console-toggle svg {
     transform: rotate(180deg);
 }
 
-/* Add padding to main content to account for console */
-.node-list-container {
-    padding-bottom: 60px;
+/* Resize handle */
+.console-resize-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 6px;
+    cursor: ns-resize;
+    background: transparent;
+    z-index: 10;
+    transition: background var(--transition-fast);
+}
+
+.console-resize-handle::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 3px;
+    background: var(--border-color);
+    border-radius: 2px;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.console-resize-handle:hover::before,
+.console-panel.resizing .console-resize-handle::before {
+    opacity: 1;
+}
+
+.console-resize-handle:hover,
+.console-panel.resizing .console-resize-handle {
+    background: var(--accent-primary);
+    opacity: 0.3;
+}
+
+.console-panel.resizing {
+    transition: none;
+}
+
+.console-panel.resizing .console-body {
+    transition: none;
 }
 
 .console-header {
@@ -3368,21 +3408,23 @@ body {
 }
 
 .console-body {
-    max-height: 200px;
+    height: 300px;
+    min-height: 100px;
+    max-height: 70vh;
     overflow: hidden;
-    transition: max-height var(--transition-normal);
     background: var(--bg-primary);
 }
 
 .console-content {
     padding: 12px 16px;
-    max-height: 180px;
+    height: 100%;
     overflow-y: auto;
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     font-size: 12px;
     line-height: 1.6;
     max-width: 1600px;
     margin: 0 auto;
+    box-sizing: border-box;
 }
 
 .console-entry {
@@ -3430,7 +3472,7 @@ body {
     font-style: italic;
 }
 
-/* Footer - Above the sticky console */
+/* Footer */
 .footer {
     display: flex;
     justify-content: center;
@@ -3440,17 +3482,6 @@ body {
     border-top: 1px solid var(--border-color);
     font-size: 12px;
     color: var(--text-muted);
-    margin-bottom: 50px; /* Space for collapsed console */
-    transition: margin-bottom var(--transition-normal);
-}
-
-/* When console is expanded, add space for console body (200px) */
-body.console-expanded .footer {
-    margin-bottom: 210px;
-}
-
-body.console-expanded .node-list-container {
-    padding-bottom: 220px;
 }
 
 .footer-divider {

@@ -107,7 +107,7 @@ git clone https://github.com/squarewulf/ComfyUI_MFConductor.git
 
 ### Method 3: Manual Download
 1. Download the latest release from the [Releases](https://github.com/squarewulf/ComfyUI_MFConductor/releases) page
-2. Extract to `ComfyUI/custom_nodes/MF_Conductor`
+2. Extract to `ComfyUI/custom_nodes/ComfyUI_MFConductor`
 3. Restart ComfyUI
 
 ---
@@ -244,7 +244,7 @@ Coming soon - share profiles and discover popular node combinations from the com
 ## File Structure
 
 ```
-MF_Conductor/
+ComfyUI_MFConductor/
 ├── __init__.py              # ComfyUI integration & API routes
 ├── standalone_server.py     # Standalone HTTP server
 ├── node_scanner.py          # Node detection and scanning

@@ -95,7 +95,7 @@
                     <polyline points="4 17 10 11 4 5"/>
                     <line x1="12" y1="19" x2="20" y2="19"/>
                 </svg>
-                Console
+                Terminal
             </button>
             <button class="main-tab" data-tab="community">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -418,10 +418,10 @@
                                 <polyline points="4 17 10 11 4 5"/>
                                 <line x1="12" y1="19" x2="20" y2="19"/>
                             </svg>
-                            <span>ComfyUI Console Output</span>
+                            <span>ComfyUI Terminal Output</span>
                         </div>
                         <div class="console-actions">
-                            <button class="btn btn-icon btn-sm" id="console-clear-btn" title="Clear Console">
+                            <button class="btn btn-icon btn-sm" id="console-clear-btn" title="Clear Terminal">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M3 6h18"/>
                                     <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/>
@@ -444,12 +444,8 @@
                     </div>
                     <div class="console-output" id="console-output">
                         <div class="console-placeholder">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
-                                <polyline points="4 17 10 11 4 5"/>
-                                <line x1="12" y1="19" x2="20" y2="19"/>
-                            </svg>
-                            <p>ComfyUI is not running</p>
-                            <p class="console-placeholder-hint">Click "Launch ComfyUI" to start</p>
+                            <div class="loading-spinner" style="width: 32px; height: 32px; margin-bottom: 16px;"></div>
+                            <p>Checking status...</p>
                         </div>
                     </div>
                     <div class="console-input-section">
@@ -491,8 +487,22 @@
             </div>
         </main>
 
-        <!-- Console Panel -->
+        <!-- Footer -->
+        <footer class="footer">
+            <span>MFConductor - Better Control. Better ComfyUI.</span>
+            <span class="footer-divider">|</span>
+            <span id="scan-time">Last scan: Never</span>
+            <span class="footer-divider">|</span>
+            <a href="https://friskcinema.com" target="_blank" class="powered-by">
+                <span>Powered by</span>
+                <img src="mflogo.webp" alt="FriskCinema" class="powered-by-logo">
+                <span>FriskCinema</span>
+            </a>
+        </footer>
+
+        <!-- Console Panel - Below footer -->
         <div class="console-panel collapsed" id="console-panel">
+            <div class="console-resize-handle" id="console-resize-handle"></div>
             <div class="console-header" id="console-header">
                 <div class="console-title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -524,19 +534,6 @@
                 </div>
             </div>
         </div>
-
-        <!-- Footer -->
-        <footer class="footer">
-            <span>MFConductor - Better Control. Better ComfyUI.</span>
-            <span class="footer-divider">|</span>
-            <span id="scan-time">Last scan: Never</span>
-            <span class="footer-divider">|</span>
-            <a href="https://friskcinema.com" target="_blank" class="powered-by">
-                <span>Powered by</span>
-                <img src="mflogo.webp" alt="FriskCinema" class="powered-by-logo">
-                <span>FriskCinema</span>
-            </a>
-        </footer>
     </div>
 
     <!-- Profile Editor Page (hidden by default) -->

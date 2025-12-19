@@ -1082,13 +1082,13 @@ class NodeScanner:
             self.custom_nodes_path = self._find_custom_nodes_path()
         
         self.nodes: List[CustomNode] = []
-        self._cache_file = self.custom_nodes_path / 'MF_Conductor' / 'nodes_cache.json'
+        self._cache_file = self.custom_nodes_path / 'ComfyUI_MFConductor' / 'nodes_cache.json'
     
     def _find_custom_nodes_path(self) -> Path:
         """Find the custom_nodes directory"""
         # Check relative to this file first
         current_dir = Path(__file__).parent
-        if current_dir.name == 'MF_Conductor':
+        if current_dir.name == 'ComfyUI_MFConductor':
             return current_dir.parent
         
         # Check common locations
@@ -1110,7 +1110,7 @@ class NodeScanner:
             try:
                 with open(self._cache_file, 'r', encoding='utf-8') as f:
                     cache = json.load(f)
-                    if cache.get('version') == '1.0':
+                    if cache.get('version') == '1.1':
                         return cache.get('nodes', [])
             except Exception:
                 pass
@@ -1157,7 +1157,7 @@ class NodeScanner:
         """Save scanned nodes to cache file"""
         try:
             cache_data = {
-                'version': '1.0',
+                'version': '1.1',
                 'scanned_at': datetime.now().isoformat(),
                 'nodes': [node.to_dict() for node in self.nodes]
             }
