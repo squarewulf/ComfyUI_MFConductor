@@ -26,7 +26,7 @@
                     <span class="logo-text">MF<span class="logo-accent">Conductor</span></span>
                     <span class="logo-tagline">Better Control. Better ComfyUI.</span>
                 </div>
-                <span class="version-badge">v1.0</span>
+                <span class="version-badge">v1.1</span>
             </div>
             <div class="header-right">
                 <span class="header-status" id="header-status"></span>
@@ -405,6 +405,19 @@
                     <div class="confirm-actions">
                         <button class="btn btn-secondary" id="confirm-cancel-btn">Cancel</button>
                         <button class="btn btn-primary" id="confirm-ok-btn">OK</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Custom Prompt Modal -->
+            <div class="modal-overlay" id="prompt-modal" style="display: none;">
+                <div class="modal modal-prompt">
+                    <div class="prompt-title" id="prompt-title">Enter Value</div>
+                    <div class="prompt-message" id="prompt-message">Please enter a value:</div>
+                    <input type="text" class="prompt-input" id="prompt-input" placeholder="">
+                    <div class="prompt-actions">
+                        <button class="btn btn-secondary" id="prompt-cancel-btn">Cancel</button>
+                        <button class="btn btn-primary" id="prompt-ok-btn">OK</button>
                     </div>
                 </div>
             </div>
@@ -936,6 +949,13 @@
             </svg>
             Export
         </button>
+        <button class="context-menu-item" data-action="quick-launch">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+            Create Quick Launch
+        </button>
         <div class="context-menu-divider"></div>
         <button class="context-menu-item context-menu-item-danger" data-action="delete">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1190,6 +1210,26 @@
                             </svg>
                             Load Preset Profiles
                         </button>
+                    </div>
+                </div>
+                
+                <!-- Shortcuts Section -->
+                <div class="settings-section">
+                    <h3>Shortcuts</h3>
+                    
+                    <div class="settings-group">
+                        <p class="settings-description">Create a shortcut to launch MF Conductor standalone server.</p>
+                        <button class="btn btn-secondary" onclick="app.createConductorShortcut()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                            </svg>
+                            Create Shortcut
+                        </button>
+                    </div>
+                    
+                    <div class="settings-group">
+                        <p class="settings-description">Tip: Right-click any profile to create a quick launch shortcut that starts ComfyUI with that profile's exact settings.</p>
                     </div>
                 </div>
                 

@@ -192,11 +192,27 @@ MF Conductor comes with pre-configured profiles for common setups:
 
 **Right-Click Menu:**
 - Launch with profile
+- **Create Quick Launch** - Create a Windows shortcut that launches ComfyUI with this profile
 - Edit profile settings
 - Duplicate profile
 - Set/remove as default
 - Export to JSON file
 - Delete profile
+
+### Quick Launch Shortcuts
+
+Create Windows shortcuts that launch ComfyUI with a specific profile configuration:
+
+1. Right-click any profile
+2. Select "Create Quick Launch"
+3. Choose where to save the shortcut (Desktop, Start Menu, etc.)
+4. The shortcut will:
+   - Enable/disable nodes according to the profile
+   - Launch ComfyUI with all profile flags
+   - Use the MF Conductor icon
+
+You can also create a shortcut to launch MF Conductor itself:
+- Go to **Settings** → **Shortcuts** → **Create Shortcut**
 
 ### How Node Enable/Disable Works
 
@@ -257,7 +273,8 @@ ComfyUI_MFConductor/
 ├── LICENSE                  # MIT License
 ├── .gitignore               # Git ignore rules
 ├── data/                    # User data (auto-generated)
-│   └── profiles.json        # Saved profiles
+│   ├── profiles.json        # Saved profiles
+│   └── launch_*.py/.bat     # Generated profile launcher scripts
 ├── profiles/                # Generated batch files
 ├── js/
 │   └── mf_conductor.js      # ComfyUI sidebar integration
@@ -265,7 +282,8 @@ ComfyUI_MFConductor/
     ├── index.html           # Main UI
     ├── style.css            # Styles
     ├── app.js               # Frontend application
-    ├── mfconductor_logo.svg # Logo
+    ├── mfconductor_logo.svg # Logo (SVG)
+    ├── mfconductor_logo.ico # Logo (Windows icon for shortcuts)
     └── avatars/             # Profile avatar images
 ```
 

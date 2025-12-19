@@ -1164,6 +1164,48 @@ try:
             'status': 'running'
         })
     
+    @routes.get('/mf_conductor/api/system/desktop-path')
+    async def _mnf_desktop_path(request):
+        """Get the user's Desktop path for shortcut creation"""
+        desktop = str(Path.home() / 'Desktop')
+        return web.json_response({'success': True, 'path': desktop})
+    
+    @routes.post('/mf_conductor/api/system/save-dialog')
+    async def _mnf_save_dialog(request):
+        """Show a native Windows save file dialog"""
+        try:
+            import subprocess
+            data = await request.json()
+            suggested_name = data.get('suggested_name', 'shortcut.lnk')
+            
+            desktop = str(Path.home() / 'Desktop')
+            ps_script = f'''
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.SaveFileDialog
+$dialog.InitialDirectory = "{desktop}"
+$dialog.Filter = "Windows Shortcut (*.lnk)|*.lnk"
+$dialog.FileName = "{suggested_name}"
+$dialog.Title = "Save Shortcut"
+$result = $dialog.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
+    Write-Output $dialog.FileName
+}} else {{
+    Write-Output "CANCELLED"
+}}
+'''
+            result = subprocess.run(
+                ['powershell', '-Command', ps_script],
+                capture_output=True,
+                text=True
+            )
+            output = result.stdout.strip()
+            if output == 'CANCELLED' or not output:
+                return web.json_response({'success': False, 'cancelled': True})
+            else:
+                return web.json_response({'success': True, 'path': output})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
     @routes.post('/mf_conductor/api/comfy/launch')
     async def _mnf_comfy_launch(request):
         """Cannot launch ComfyUI from integrated mode (it's already running)"""
@@ -1227,6 +1269,251 @@ try:
         except asyncio.TimeoutError:
             return web.json_response({'success': False, 'message': 'Command timed out after 120 seconds'})
         except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
+    # ==================== SHORTCUT CREATION ====================
+    
+    @routes.post('/mf_conductor/api/shortcuts/conductor')
+    async def _mnf_create_conductor_shortcut(request):
+        """Create a shortcut to launch MF Conductor standalone server"""
+        try:
+            import subprocess
+            import os
+            
+            if os.name != 'nt':
+                return web.json_response({'success': False, 'message': 'Shortcut creation is only supported on Windows'})
+            
+            data = await request.json()
+            save_path = data.get('save_path')
+            
+            conductor_dir = Path(__file__).parent
+            batch_file = conductor_dir / 'Launch_MFConductor.bat'
+            icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
+            icon_line = f'$Shortcut.IconLocation = "{icon_path}"' if icon_path.exists() else ''
+            
+            if not save_path:
+                save_path = str(Path.home() / 'Desktop' / 'MF Conductor.lnk')
+            
+            if not save_path.endswith('.lnk'):
+                save_path = save_path + '.lnk'
+            
+            ps_script = f'''
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut("{save_path}")
+$Shortcut.TargetPath = "{batch_file}"
+$Shortcut.WorkingDirectory = "{conductor_dir}"
+$Shortcut.Description = "Launch MF Conductor - ComfyUI Control Center"
+{icon_line}
+$Shortcut.Save()
+'''
+            result = subprocess.run(
+                ['powershell', '-Command', ps_script],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                return web.json_response({'success': True, 'message': f'Shortcut created at {save_path}', 'path': save_path})
+            else:
+                return web.json_response({'success': False, 'message': f'PowerShell error: {result.stderr}'})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
+    @routes.post('/mf_conductor/api/shortcuts/profile')
+    async def _mnf_create_profile_shortcut(request):
+        """Create a shortcut that launches ComfyUI with a specific profile"""
+        try:
+            import subprocess
+            import os
+            
+            if os.name != 'nt':
+                return web.json_response({'success': False, 'message': 'Shortcut creation is only supported on Windows'})
+            
+            data = await request.json()
+            profile_name = data.get('profile_name', '')
+            save_path = data.get('save_path')
+            
+            if not profile_name:
+                return web.json_response({'success': False, 'message': 'Profile name is required'}, status=400)
+            
+            user_data = get_user_data()
+            profiles = user_data.get_profiles()
+            
+            if profile_name not in profiles:
+                return web.json_response({'success': False, 'message': f'Profile "{profile_name}" not found'})
+            
+            profile = profiles[profile_name]
+            
+            # Build command line args from profile
+            args = []
+            flags = profile.get('flags', {})
+            
+            # Process all flag values - flags are stored as {"vram": "--highvram", "attention": "--use-sage-attention"}
+            for key, value in flags.items():
+                if value and isinstance(value, str) and value.startswith('--'):
+                    args.extend(value.split())
+            
+            port = profile.get('port')
+            if port:
+                args.extend(['--port', str(port)])
+            
+            listen = profile.get('listen')
+            if listen:
+                args.extend(['--listen', listen])
+            
+            custom_flags = profile.get('custom_flags', '')
+            if custom_flags:
+                args.extend(custom_flags.split())
+            
+            custom_flags_list = profile.get('custom_flags_list', [])
+            if custom_flags_list:
+                for flag in custom_flags_list:
+                    if flag and isinstance(flag, str):
+                        args.extend(flag.split())
+            
+            # Get paths
+            conductor_dir = Path(__file__).parent
+            comfy_root = conductor_dir.parent.parent
+            portable_root = comfy_root.parent
+            
+            python_path = portable_root / 'python_embeded' / 'python.exe'
+            if not python_path.exists():
+                python_path = Path(sys.executable)
+            
+            # Use provided save_path or default to Desktop
+            safe_name = "".join(c for c in profile_name if c.isalnum() or c in (' ', '-', '_')).strip()
+            if not save_path:
+                save_path = str(Path.home() / 'Desktop' / f'ComfyUI - {safe_name}.lnk')
+            
+            if not save_path.endswith('.lnk'):
+                save_path = save_path + '.lnk'
+            
+            # Get enabled/disabled node lists
+            enabled_list = repr(profile.get('enabled', []))
+            disabled_list = repr(profile.get('disabled', []))
+            args_str = repr(args)
+            
+            # Create a Python launcher script that applies the profile and launches ComfyUI
+            safe_filename = profile_name.replace(" ", "_").replace("-", "_")
+            launcher_script = conductor_dir / 'data' / f'launch_{safe_filename}.py'
+            launcher_script.parent.mkdir(parents=True, exist_ok=True)
+            
+            launcher_content = f'''#!/usr/bin/env python
+"""Auto-generated launcher for profile: {profile_name}"""
+import os
+import sys
+import subprocess
+from pathlib import Path
+
+# Profile configuration
+PROFILE_NAME = {repr(profile_name)}
+ENABLED_NODES = {enabled_list}
+DISABLED_NODES = {disabled_list}
+COMFY_ARGS = {args_str}
+
+def apply_node_states(custom_nodes_path):
+    """Enable/disable nodes according to profile"""
+    if not ENABLED_NODES and not DISABLED_NODES:
+        return  # No node management needed
+    
+    # Get all node folders
+    all_folders = []
+    for item in custom_nodes_path.iterdir():
+        if item.is_dir() and not item.name.startswith('.'):
+            name = item.name.replace('.disabled', '')
+            all_folders.append(name)
+    
+    enabled_set = set(ENABLED_NODES) if ENABLED_NODES else set(all_folders)
+    
+    for folder_name in all_folders:
+        folder_path = custom_nodes_path / folder_name
+        disabled_path = custom_nodes_path / f"{{folder_name}}.disabled"
+        
+        if folder_name in enabled_set:
+            # Should be enabled
+            if disabled_path.exists() and not folder_path.exists():
+                disabled_path.rename(folder_path)
+                print(f"Enabled: {{folder_name}}")
+        else:
+            # Should be disabled
+            if folder_path.exists() and not disabled_path.exists():
+                folder_path.rename(disabled_path)
+                print(f"Disabled: {{folder_name}}")
+
+def main():
+    # Paths
+    script_dir = Path(__file__).parent.parent
+    comfy_root = script_dir.parent.parent
+    custom_nodes_path = comfy_root / 'custom_nodes'
+    
+    print(f"Launching ComfyUI with profile: {{PROFILE_NAME}}")
+    
+    # Apply node states
+    if ENABLED_NODES or DISABLED_NODES:
+        print("Applying node configuration...")
+        apply_node_states(custom_nodes_path)
+    
+    # Find Python
+    portable_root = comfy_root.parent
+    python_path = portable_root / 'python_embeded' / 'python.exe'
+    if not python_path.exists():
+        python_path = sys.executable
+    
+    # Launch ComfyUI
+    main_py = comfy_root / 'main.py'
+    cmd = [str(python_path), str(main_py)] + COMFY_ARGS
+    
+    print(f"Command: {{' '.join(cmd)}}")
+    print("-" * 50)
+    
+    os.chdir(comfy_root)
+    subprocess.run(cmd)
+
+if __name__ == '__main__':
+    main()
+'''
+            
+            with open(launcher_script, 'w') as f:
+                f.write(launcher_content)
+            
+            # Create batch wrapper
+            batch_file = conductor_dir / 'data' / f'launch_{safe_filename}.bat'
+            batch_content = f'@echo off\ncd /d "{conductor_dir / "data"}"\n"{python_path}" "{launcher_script}"\npause\n'
+            
+            with open(batch_file, 'w') as f:
+                f.write(batch_content)
+            
+            # Use PowerShell to create the shortcut with MF Conductor icon
+            icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
+            icon_line = f'$Shortcut.IconLocation = "{icon_path}"' if icon_path.exists() else ''
+            
+            ps_script = f'''
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut("{save_path}")
+$Shortcut.TargetPath = "{batch_file}"
+$Shortcut.WorkingDirectory = "{comfy_root}"
+$Shortcut.Description = "Launch ComfyUI with {profile_name} profile"
+{icon_line}
+$Shortcut.Save()
+'''
+            result = subprocess.run(
+                ['powershell', '-Command', ps_script],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                return web.json_response({
+                    'success': True,
+                    'message': f'Shortcut created at {save_path}',
+                    'path': save_path,
+                    'launcher_path': str(launcher_script)
+                })
+            else:
+                return web.json_response({'success': False, 'message': f'PowerShell error: {result.stderr}'})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             return web.json_response({'success': False, 'message': str(e)}, status=500)
     
     # Serve static files from web directory
