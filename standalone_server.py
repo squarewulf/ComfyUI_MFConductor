@@ -527,31 +527,170 @@ class MFConductorAPI:
             return {'success': False, 'message': str(e)}
     
     def check_package_updates(self) -> dict:
-        """Check which packages have updates available"""
+        """Check which packages have updates available - FAST version using PyPI API"""
         import subprocess
+        import urllib.request
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
         try:
             python_path = self.pip.python_path if self.pip else 'python'
+            
+            # Step 1: Get list of installed packages (FAST - just reads local metadata)
             result = subprocess.run(
-                [python_path, '-m', 'pip', 'list', '--outdated', '--format=json'],
+                [python_path, '-m', 'pip', 'list', '--format=json'],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=10  # Should be very fast
             )
             
-            if result.returncode == 0:
-                outdated = json.loads(result.stdout) if result.stdout.strip() else []
-                updates = []
-                for pkg in outdated:
-                    updates.append({
-                        'name': pkg.get('name', ''),
-                        'current_version': pkg.get('version', ''),
-                        'latest_version': pkg.get('latest_version', '')
-                    })
-                return {'success': True, 'updates': updates}
-            else:
-                return {'success': False, 'message': result.stderr or 'Failed to check updates'}
+            if result.returncode != 0:
+                return {'success': False, 'message': 'Failed to get installed packages list'}
+            
+            installed_packages = json.loads(result.stdout) if result.stdout.strip() else []
+            if not installed_packages:
+                return {'success': True, 'updates': []}
+            
+            # Step 2: Check PyPI API for each package in parallel (MUCH faster than pip list --outdated)
+            updates = []
+            lock = threading.Lock()
+            
+            def check_package(pkg_info):
+                """Check a single package against PyPI"""
+                package_name = pkg_info.get('name', '').lower()
+                current_version = pkg_info.get('version', '')
+                
+                if not package_name:
+                    return None
+                
+                try:
+                    # Skip packages that are not from PyPI (local, editable installs, etc.)
+                    if not current_version or current_version.startswith('file://'):
+                        return None
+                    
+                    # Check PyPI JSON API (fast HTTP request)
+                    url = f'https://pypi.org/pypi/{package_name}/json'
+                    with urllib.request.urlopen(url, timeout=3) as response:
+                        data = json.loads(response.read())
+                        latest_version = data.get('info', {}).get('version', '')
+                        
+                        if latest_version and latest_version != current_version:
+                            # Compare versions properly
+                            try:
+                                from packaging import version
+                                if version.parse(latest_version) > version.parse(current_version):
+                                    return {
+                                        'name': package_name,
+                                        'current_version': current_version,
+                                        'latest_version': latest_version
+                                    }
+                            except:
+                                # Fallback: simple string comparison if packaging not available
+                                if latest_version > current_version:
+                                    return {
+                                        'name': package_name,
+                                        'current_version': current_version,
+                                        'latest_version': latest_version
+                                    }
+                except urllib.error.HTTPError as e:
+                    # Package not found on PyPI (might be local/private)
+                    if e.code != 404:
+                        pass  # Other errors we can ignore
+                except Exception:
+                    # Network error, timeout, etc. - skip this package
+                    pass
+                
+                return None
+            
+            # Check packages in parallel (20 concurrent requests)
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = {executor.submit(check_package, pkg): pkg for pkg in installed_packages}
+                
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result:
+                        with lock:
+                            updates.append(result)
+            
+            return {'success': True, 'updates': updates}
+            
         except subprocess.TimeoutExpired:
-            return {'success': False, 'message': 'Timeout checking updates'}
+            return {'success': False, 'message': 'Timeout getting installed packages list'}
+        except json.JSONDecodeError as e:
+            return {'success': False, 'message': f'Invalid response from pip: {str(e)}'}
+        except Exception as e:
+            return {'success': False, 'message': f'Error: {str(e)}'}
+    
+    def check_single_package_update(self, package_name: str) -> dict:
+        """Check if a single package has updates available - FAST version using PyPI API"""
+        import subprocess
+        import urllib.request
+        
+        try:
+            python_path = self.pip.python_path if self.pip else 'python'
+            
+            # Get current version (fast)
+            current_result = subprocess.run(
+                [python_path, '-m', 'pip', 'show', package_name],
+                capture_output=True,
+                text=True,
+                timeout=3
+            )
+            
+            current = 'unknown'
+            if current_result.returncode == 0:
+                for line in current_result.stdout.split('\n'):
+                    if line.startswith('Version:'):
+                        current = line.split(':', 1)[1].strip()
+                        break
+            
+            # Check PyPI API directly (much faster than pip install --dry-run)
+            try:
+                url = f'https://pypi.org/pypi/{package_name}/json'
+                with urllib.request.urlopen(url, timeout=3) as response:
+                    data = json.loads(response.read())
+                    latest = data.get('info', {}).get('version', current)
+                    
+                    # Compare versions properly
+                    has_update = False
+                    if latest and latest != 'unknown' and latest != current:
+                        try:
+                            from packaging import version
+                            has_update = version.parse(latest) > version.parse(current)
+                        except:
+                            # Fallback: simple string comparison
+                            has_update = latest > current
+                    
+                    return {
+                        'success': True,
+                        'name': package_name,
+                        'current_version': current,
+                        'latest_version': latest,
+                        'has_update': has_update
+                    }
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    # Package not on PyPI (local/private)
+                    return {
+                        'success': True,
+                        'name': package_name,
+                        'current_version': current,
+                        'latest_version': current,
+                        'has_update': False
+                    }
+                raise
+            except Exception:
+                # Network error - assume up to date
+                return {
+                    'success': True,
+                    'name': package_name,
+                    'current_version': current,
+                    'latest_version': current,
+                    'has_update': False
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {'success': False, 'message': 'Check timed out'}
         except Exception as e:
             return {'success': False, 'message': str(e)}
     
@@ -1377,6 +1516,30 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             self.send_json(data)
             return
         
+        if path == '/api/packages/check-updates-status':
+            job_id = query.get('job_id', [None])[0]
+            if not job_id or not hasattr(self.api, '_update_jobs'):
+                self.send_json({'success': False, 'message': 'Invalid job ID'})
+                return
+            
+            job = self.api._update_jobs.get(job_id)
+            if not job:
+                self.send_json({'success': False, 'message': 'Job not found'})
+                return
+            
+            if job['status'] == 'completed':
+                # Clean up old job
+                result = job['result']
+                del self.api._update_jobs[job_id]
+                self.send_json(result)
+            elif job['status'] == 'error':
+                error = job['error']
+                del self.api._update_jobs[job_id]
+                self.send_json({'success': False, 'message': error})
+            else:
+                self.send_json({'success': True, 'status': 'running'})
+            return
+        
         # ComfyUI Process Management
         if path == '/api/comfy/status':
             data = self.api.get_comfy_status()
@@ -1517,7 +1680,48 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             return
         
         if path == '/api/packages/check-updates':
-            data = self.api.check_package_updates()
+            # Run in background thread to avoid blocking
+            import threading
+            import time
+            
+            # Generate job ID
+            job_id = str(int(time.time() * 1000))
+            
+            # Initialize job status
+            if not hasattr(self.api, '_update_jobs'):
+                self.api._update_jobs = {}
+            
+            self.api._update_jobs[job_id] = {
+                'status': 'running',
+                'result': None,
+                'error': None
+            }
+            
+            def check_updates_background(job_id):
+                try:
+                    result = self.api.check_package_updates()
+                    self.api._update_jobs[job_id]['status'] = 'completed'
+                    self.api._update_jobs[job_id]['result'] = result
+                except Exception as e:
+                    self.api._update_jobs[job_id]['status'] = 'error'
+                    self.api._update_jobs[job_id]['error'] = str(e)
+            
+            thread = threading.Thread(target=check_updates_background, args=(job_id,), daemon=True)
+            thread.start()
+            
+            # Return job ID immediately
+            self.send_json({'success': True, 'job_id': job_id, 'status': 'running'})
+            return
+        
+        
+        if path == '/api/packages/check-single':
+            # Check a single package for updates
+            package_name = body.get('package_name', '')
+            if not package_name:
+                self.send_json({'success': False, 'message': 'Package name is required'}, 400)
+                return
+            
+            data = self.api.check_single_package_update(package_name)
             self.send_json(data)
             return
         
