@@ -908,6 +908,7 @@ try:
     async def _mnf_check_package_updates(request):
         import asyncio
         import json as json_module
+        import aiohttp
         
         try:
             try:
@@ -920,29 +921,72 @@ try:
                 import sys
                 python_path = sys.executable
             
+            # Step 1: Get installed packages list (fast)
             proc = await asyncio.create_subprocess_exec(
-                python_path, '-m', 'pip', 'list', '--outdated', '--format=json',
+                python_path, '-m', 'pip', 'list', '--format=json',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
             
-            if proc.returncode == 0:
-                outdated = json_module.loads(stdout.decode()) if stdout.decode().strip() else []
-                updates = []
-                for pkg in outdated:
-                    updates.append({
-                        'name': pkg.get('name', ''),
-                        'current_version': pkg.get('version', ''),
-                        'latest_version': pkg.get('latest_version', '')
-                    })
-                return web.json_response({'success': True, 'updates': updates})
-            else:
+            if proc.returncode != 0:
                 return web.json_response({
                     'success': False,
-                    'message': stderr.decode() or 'Failed to check updates'
+                    'message': 'Failed to get installed packages list'
                 }, status=500)
+            
+            installed_packages = json_module.loads(stdout.decode()) if stdout.decode().strip() else []
+            if not installed_packages:
+                return web.json_response({'success': True, 'updates': []})
+            
+            # Step 2: Check PyPI API for each package in parallel (FAST)
+            async def check_package(pkg_info):
+                """Check a single package against PyPI"""
+                package_name = pkg_info.get('name', '').lower()
+                current_version = pkg_info.get('version', '')
+                
+                if not package_name or not current_version or current_version.startswith('file://'):
+                    return None
+                
+                try:
+                    url = f'https://pypi.org/pypi/{package_name}/json'
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as response:
+                            if response.status == 404:
+                                return None  # Package not on PyPI
+                            data = await response.json()
+                            latest_version = data.get('info', {}).get('version', '')
+                            
+                            if latest_version and latest_version != current_version:
+                                try:
+                                    from packaging import version
+                                    if version.parse(latest_version) > version.parse(current_version):
+                                        return {
+                                            'name': package_name,
+                                            'current_version': current_version,
+                                            'latest_version': latest_version
+                                        }
+                                except:
+                                    if latest_version > current_version:
+                                        return {
+                                            'name': package_name,
+                                            'current_version': current_version,
+                                            'latest_version': latest_version
+                                        }
+                except:
+                    pass  # Network error - skip this package
+                
+                return None
+            
+            # Check packages in parallel (20 concurrent requests)
+            tasks = [check_package(pkg) for pkg in installed_packages]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            updates = [r for r in results if r and not isinstance(r, Exception)]
+            
+            return web.json_response({'success': True, 'updates': updates})
+            
         except asyncio.TimeoutError:
             return web.json_response({'success': False, 'message': 'Timeout checking updates'}, status=500)
         except Exception as e:

@@ -527,28 +527,21 @@ class MFConductor {
                 // Grid view tile
                 html += `
                     <div class="profile-tile ${isDefault ? 'default' : ''}" data-profile="${this.escapeHtml(name)}">
-                        <button class="profile-export-btn" 
-                                onclick="event.stopPropagation(); app.exportProfile('${this.escapeHtml(name)}')"
-                                title="Export Profile">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                <polyline points="17 8 12 3 7 8"/>
-                                <line x1="12" y1="3" x2="12" y2="15"/>
-                            </svg>
-                        </button>
-                        <button class="profile-star ${isDefault ? 'active' : ''}" 
-                                onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeHtml(name)}')"
-                                title="${isDefault ? 'Remove as default' : 'Set as default'}">
-                            <svg viewBox="0 0 24 24" fill="${isDefault ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
-                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                            </svg>
-                        </button>
                         <div class="profile-tile-content">
                             <div class="profile-tile-avatar">
                                 <img src="${this.escapeHtml(avatar)}" alt="${this.escapeHtml(name)}" onerror="this.src='default.svg'">
                             </div>
                             <div class="profile-tile-info">
-                                <div class="profile-tile-name">${this.escapeHtml(name)}</div>
+                                <div class="profile-tile-name">
+                                    ${this.escapeHtml(name)}
+                                    <button class="profile-star ${isDefault ? 'active' : ''}" 
+                                            onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeHtml(name)}')"
+                                            title="${isDefault ? 'Remove as default' : 'Set as default'}">
+                                        <svg viewBox="0 0 24 24" fill="${isDefault ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
+                                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                                        </svg>
+                                    </button>
+                                </div>
                                 <div class="profile-tile-meta">${nodeCountText}</div>
                             </div>
                         </div>
@@ -1266,7 +1259,10 @@ class MFConductor {
         // Package transfers
         document.getElementById('pe-include-all-pkg')?.addEventListener('click', () => {
             this.profileExcludedPackages.clear();
-            this.renderProfileEditorPackages();
+            this.renderProfileEditorPackages(
+                document.getElementById('pe-excluded-pkg-search')?.value || '',
+                document.getElementById('pe-included-pkg-search')?.value || ''
+            );
         });
         
         document.getElementById('pe-exclude-all-pkg')?.addEventListener('click', () => {
@@ -1292,19 +1288,35 @@ class MFConductor {
                     this.showToast('info', `Kept ${skipped} required package${skipped > 1 ? 's' : ''}`);
                 }
             }
-            this.renderProfileEditorPackages();
+            this.renderProfileEditorPackages(
+                document.getElementById('pe-excluded-pkg-search')?.value || '',
+                document.getElementById('pe-included-pkg-search')?.value || ''
+            );
         });
         
         document.getElementById('pe-include-selected-pkg')?.addEventListener('click', () => {
-            document.querySelectorAll('#pe-excluded-pkg-list .profile-node-item.selected').forEach(item => {
+            const selected = document.querySelectorAll('#pe-excluded-pkg-list .profile-node-item.selected');
+            if (selected.length === 0) {
+                this.showToast('info', 'No packages selected');
+                return;
+            }
+            selected.forEach(item => {
                 this.profileExcludedPackages.delete(item.dataset.pkg);
             });
-            this.renderProfileEditorPackages();
+            this.renderProfileEditorPackages(
+                document.getElementById('pe-excluded-pkg-search')?.value || '',
+                document.getElementById('pe-included-pkg-search')?.value || ''
+            );
         });
         
         document.getElementById('pe-exclude-selected-pkg')?.addEventListener('click', () => {
+            const selected = document.querySelectorAll('#pe-included-pkg-list .profile-node-item.selected');
+            if (selected.length === 0) {
+                this.showToast('info', 'No packages selected');
+                return;
+            }
             let skipped = 0;
-            document.querySelectorAll('#pe-included-pkg-list .profile-node-item.selected').forEach(item => {
+            selected.forEach(item => {
                 const pkgName = item.dataset.pkg;
                 const lower = pkgName.toLowerCase();
                 let isRequired = false;
@@ -1323,7 +1335,10 @@ class MFConductor {
             if (skipped > 0) {
                 this.showToast('warning', `Cannot exclude ${skipped} required package${skipped > 1 ? 's' : ''}`);
             }
-            this.renderProfileEditorPackages();
+            this.renderProfileEditorPackages(
+                document.getElementById('pe-excluded-pkg-search')?.value || '',
+                document.getElementById('pe-included-pkg-search')?.value || ''
+            );
         });
         
         // Search filters for packages
@@ -1494,10 +1509,13 @@ class MFConductor {
         
         excludedContainer.innerHTML = excluded.map(pkg => {
             const isRequired = isPackageRequired(pkg.name);
+            const escapedName = this.escapeHtml(pkg.name);
             return `
-                <div class="profile-node-item ${isRequired ? 'required-item' : ''}" data-pkg="${this.escapeHtml(pkg.name)}" 
-                     ondblclick="app.peIncludePackage('${this.escapeHtml(pkg.name)}')">
-                    <span class="node-name">${this.escapeHtml(pkg.name)}</span>
+                <div class="profile-node-item ${isRequired ? 'required-item' : ''}" 
+                     data-pkg="${escapedName}" 
+                     onclick="this.classList.toggle('selected')" 
+                     ondblclick="app.peIncludePackage('${escapedName}')">
+                    <span class="node-name">${escapedName}</span>
                     <span class="node-version">${this.escapeHtml(pkg.version || '')}</span>
                     ${isRequired ? '<span class="required-badge warning" title="Required for ComfyUI - should be included!">Required</span>' : ''}
                 </div>
@@ -1510,9 +1528,11 @@ class MFConductor {
             const onDblClick = isRequired 
                 ? "app.showToast('warning', 'This package is required for ComfyUI')" 
                 : `app.peExcludePackage('${escapedName}')`;
+            const onClick = isRequired ? '' : "this.classList.toggle('selected')";
             return `
                 <div class="profile-node-item ${isRequired ? 'required-item locked' : ''}" 
                      data-pkg="${escapedName}" 
+                     onclick="${onClick}" 
                      ondblclick="${onDblClick}"
                      ${isRequired ? 'title="Required - cannot be excluded"' : ''}>
                     <span class="node-name">${escapedName}</span>
@@ -1521,23 +1541,6 @@ class MFConductor {
                 </div>
             `;
         }).join('') || '<div style="padding:20px;color:var(--text-muted);font-size:11px;text-align:center;">All packages excluded</div>';
-        
-        // Add click handlers for selection (skip required items on included side)
-        excludedContainer.querySelectorAll('.profile-node-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                if (e.detail === 1) {
-                    item.classList.toggle('selected');
-                }
-            });
-        });
-        
-        includedContainer.querySelectorAll('.profile-node-item:not(.locked)').forEach(item => {
-            item.addEventListener('click', (e) => {
-                if (e.detail === 1) {
-                    item.classList.toggle('selected');
-                }
-            });
-        });
         
         if (excludedCount) excludedCount.textContent = this.profileExcludedPackages.size;
         if (includedCount) includedCount.textContent = this.installedPackages.length - this.profileExcludedPackages.size;
@@ -1865,6 +1868,9 @@ class MFConductor {
                         </div>
                     </div>
                     <div class="package-actions">
+                        <button class="btn btn-secondary btn-sm package-check-btn" onclick="app.checkSinglePackageUpdate('${this.escapeHtml(pkg.name)}')" title="Check for updates">
+                            <i class="fa-solid fa-clock-rotate-left"></i>
+                        </button>
                         ${isOutdated ? `
                             <button class="btn btn-success btn-sm" onclick="app.upgradePackage('${this.escapeHtml(pkg.name)}')" title="Upgrade to ${pkg.latestVersion}">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1897,49 +1903,163 @@ class MFConductor {
             btn.innerHTML = '<div class="loading-spinner" style="width:14px;height:14px;margin:0;"></div> Checking...';
         }
         
-        this.showToast('info', 'Checking for package updates...');
+        this.showToast('info', 'Checking for package updates... (this may take a while)');
+        this.log('Checking for package updates... (this may take a while)', 'info');
         
         try {
-            const response = await fetch(`${this.apiBase}/api/packages/check-updates`, {
+            // Start the check (returns immediately with job_id)
+            const startResponse = await fetch(`${this.apiBase}/api/packages/check-updates`, {
                 method: 'POST'
+            });
+            
+            const startData = await startResponse.json();
+            
+            if (!startData.success || !startData.job_id) {
+                this.log(`Failed to start update check: ${startData.message || 'Unknown error'}`, 'error');
+                this.showToast('error', startData.message || 'Failed to start update check');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check Updates';
+                }
+                return;
+            }
+            
+            const jobId = startData.job_id;
+            this.log('Update check started (running in background)...', 'info');
+            
+            let pollCount = 0;
+            
+            // Poll for results
+            const pollInterval = setInterval(async () => {
+                try {
+                    pollCount++;
+                    if (pollCount % 5 === 0) { // Log progress every 10 seconds (5 polls * 2 seconds)
+                        this.log('Still checking for updates...', 'info');
+                    }
+                    
+                    const statusResponse = await fetch(`${this.apiBase}/api/packages/check-updates-status?job_id=${jobId}`);
+                    const statusData = await statusResponse.json();
+                    
+                    if (statusData.status === 'running') {
+                        // Still running, continue polling
+                        return;
+                    }
+                    
+                    // Done or error
+                    clearInterval(pollInterval);
+                    
+                    if (statusData.success && statusData.updates) {
+                        // Update package info with update status
+                        statusData.updates.forEach(update => {
+                            const pkg = this.installedPackages.find(p => p.name === update.name);
+                            if (pkg) {
+                                pkg.hasUpdate = true;
+                                pkg.latestVersion = update.latest_version;
+                            }
+                        });
+                        
+                        this.renderPackagesTab();
+                        this.updatePackagesStats();
+                        
+                        const count = statusData.updates.length;
+                        if (count > 0) {
+                            this.log(`Update check complete: ${count} package${count > 1 ? 's' : ''} can be updated`, 'warning');
+                            this.showToast('warning', `${count} package${count > 1 ? 's' : ''} can be updated`);
+                        } else {
+                            this.log('Update check complete: All packages are up to date', 'success');
+                            this.showToast('success', 'All packages are up to date');
+                        }
+                    } else {
+                        this.log(`Update check failed: ${statusData.message || 'Unknown error'}`, 'error');
+                        this.showToast('error', statusData.message || 'Failed to check updates');
+                    }
+                    
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check Updates';
+                    }
+                } catch (error) {
+                    clearInterval(pollInterval);
+                    console.error('Error polling update status:', error);
+                    this.log(`Error checking update status: ${error.message}`, 'error');
+                    this.showToast('error', 'Error checking update status');
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check Updates';
+                    }
+                }
+            }, 2000); // Poll every 2 seconds
+            
+            // Timeout after 3 minutes
+            setTimeout(() => {
+                clearInterval(pollInterval);
+                if (btn && btn.disabled) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check Updates';
+                }
+                this.log('Update check timed out. Try checking individual packages instead.', 'warning');
+                this.showToast('warning', 'Update check is taking longer than expected. Try checking individual packages.');
+            }, 180000);
+            
+        } catch (error) {
+            console.error('Error checking updates:', error);
+            this.log(`Failed to check updates: ${error.message}`, 'error');
+            this.showToast('error', `Failed to check updates: ${error.message}`);
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check Updates';
+            }
+        }
+    }
+    
+    async checkSinglePackageUpdate(packageName) {
+        const item = document.querySelector(`.package-item[data-package="${packageName}"]`);
+        const checkBtn = item?.querySelector('.package-check-btn');
+        
+        if (checkBtn) {
+            checkBtn.disabled = true;
+            checkBtn.innerHTML = '<div class="loading-spinner" style="width:12px;height:12px;margin:0;"></div>';
+        }
+        
+        this.log(`Checking for updates: ${packageName}...`, 'info');
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/packages/check-single`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ package_name: packageName })
             });
             
             const data = await response.json();
             
-            if (data.success && data.updates) {
-                // Update package info with update status
-                data.updates.forEach(update => {
-                    const pkg = this.installedPackages.find(p => p.name === update.name);
-                    if (pkg) {
+            if (data.success) {
+                const pkg = this.installedPackages.find(p => p.name === packageName);
+                if (pkg) {
+                    if (data.has_update) {
                         pkg.hasUpdate = true;
-                        pkg.latestVersion = update.latest_version;
+                        pkg.latestVersion = data.latest_version;
+                        this.log(`${packageName} has update available: ${data.current_version} → ${data.latest_version}`, 'warning');
+                        this.showToast('warning', `${packageName} has update: ${data.current_version} → ${data.latest_version}`);
+                    } else {
+                        pkg.hasUpdate = false;
+                        this.log(`${packageName} is up to date (${data.current_version})`, 'success');
+                        this.showToast('success', `${packageName} is up to date`);
                     }
-                });
-                
-                this.renderPackagesTab();
-                this.updatePackagesStats();
-                
-                const count = data.updates.length;
-                if (count > 0) {
-                    this.showToast('warning', `${count} package${count > 1 ? 's' : ''} can be updated`);
-                } else {
-                    this.showToast('success', 'All packages are up to date');
+                    this.renderPackagesTab();
+                    this.updatePackagesStats();
                 }
             } else {
-                this.showToast('error', data.message || 'Failed to check updates');
+                this.log(`Failed to check ${packageName}: ${data.message || 'Unknown error'}`, 'error');
+                this.showToast('error', data.message || `Failed to check ${packageName}`);
             }
         } catch (error) {
-            console.error('Error checking updates:', error);
-            this.showToast('error', 'Failed to check for updates');
+            console.error('Error checking package:', error);
+            this.log(`Error checking ${packageName}: ${error.message}`, 'error');
+            this.showToast('error', `Failed to check ${packageName}`);
         } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.innerHTML = `
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                        <path d="M21 10.12h-6.78l2.74-2.82c-2.73-2.7-7.15-2.8-9.88-.1-2.73 2.71-2.73 7.08 0 9.79s7.15 2.71 9.88 0C18.32 15.65 19 14.08 19 12.1h2c0 1.98-.88 4.55-2.64 6.29-3.51 3.48-9.21 3.48-12.72 0-3.5-3.47-3.53-9.11-.02-12.58s9.14-3.47 12.65 0L21 3v7.12zM12.5 8v4.25l3.5 2.08-.72 1.21L11 13V8h1.5z"/>
-                    </svg>
-                    Check Updates
-                `;
+            if (checkBtn) {
+                checkBtn.disabled = false;
+                checkBtn.innerHTML = '<i class="fa-solid fa-clock-rotate-left"></i>';
             }
         }
     }
@@ -2070,6 +2190,7 @@ class MFConductor {
         } catch (error) {
             console.error('Error uninstalling package:', error);
             this.showToast('error', `Failed to uninstall ${packageName}`);
+            this.log(`Error: ${error.message}`, 'error');
             if (item) item.classList.remove('updating');
         }
     }
@@ -2102,6 +2223,7 @@ class MFConductor {
         } catch (error) {
             console.error('Error upgrading package:', error);
             this.showToast('error', `Failed to upgrade ${packageName}`);
+            this.log(`Error: ${error.message}`, 'error');
             if (item) item.classList.remove('updating');
         }
     }
@@ -2136,11 +2258,13 @@ class MFConductor {
                 await this.loadPackagesTab();
             } else {
                 this.showToast('error', data.message || `Failed to reinstall ${packageName}`);
+                this.log(data.message || 'Reinstall failed', 'error');
                 if (item) item.classList.remove('updating');
             }
         } catch (error) {
             console.error('Error reinstalling package:', error);
             this.showToast('error', `Failed to reinstall ${packageName}`);
+            this.log(`Error: ${error.message}`, 'error');
             if (item) item.classList.remove('updating');
         }
     }
@@ -2228,6 +2352,7 @@ class MFConductor {
             if (item) item.classList.add('updating');
             
             try {
+                this.log(`Upgrading ${pkg.name}...`, 'info');
                 const response = await fetch(`${this.apiBase}/api/packages/upgrade`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2519,11 +2644,16 @@ class MFConductor {
         const output = document.getElementById('console-output');
         if (!output) return;
         
+        // Only show placeholder if console is empty (no messages)
+        const hasMessages = output.querySelectorAll('.console-line').length > 0;
+        if (hasMessages) {
+            return; // Don't clear existing messages
+        }
+        
         let placeholder = output.querySelector('.console-placeholder');
         if (!placeholder) {
             placeholder = document.createElement('div');
-            placeholder.className = 'console-placeholder';
-            output.innerHTML = '';
+            placeholder.className = 'console-placeholder flex flex-col items-center justify-center h-full text-slate-500';
             output.appendChild(placeholder);
         }
         
@@ -2541,6 +2671,12 @@ class MFConductor {
         const output = document.getElementById('console-output');
         if (!output) return;
         
+        // Only show placeholder if console is empty (no messages)
+        const hasMessages = output.querySelectorAll('.console-line').length > 0;
+        if (hasMessages) {
+            return; // Don't clear existing messages
+        }
+        
         // Check if we're in integrated mode (running inside ComfyUI)
         const isIntegratedMode = this.apiBase === '/mf_conductor';
         
@@ -2549,8 +2685,7 @@ class MFConductor {
         // Create placeholder if it doesn't exist
         if (!placeholder) {
             placeholder = document.createElement('div');
-            placeholder.className = 'console-placeholder';
-            output.innerHTML = '';
+            placeholder.className = 'console-placeholder flex flex-col items-center justify-center h-full text-slate-500';
             output.appendChild(placeholder);
         }
         
@@ -2731,7 +2866,10 @@ class MFConductor {
                 }
             }
         } catch (error) {
-            // Silently fail on polling errors
+            // Only log non-network errors (network errors are expected when server is down)
+            if (error.name !== 'TypeError' || !error.message.includes('fetch')) {
+                console.error('Console polling error:', error);
+            }
         }
     }
     
@@ -2767,7 +2905,10 @@ class MFConductor {
     
     appendToConsole(text, type = 'normal', skipSave = false) {
         const output = document.getElementById('console-output');
-        if (!output) return;
+        if (!output) {
+            console.warn('Console output element not found!');
+            return;
+        }
         
         // Remove placeholder if present
         const placeholder = output.querySelector('.console-placeholder');
@@ -2783,6 +2924,9 @@ class MFConductor {
         output.appendChild(line);
         
         // Store in memory array
+        if (!this.consoleOutput) {
+            this.consoleOutput = [];
+        }
         this.consoleOutput.push({ text, type, time: Date.now() });
         
         // Limit console lines to prevent memory issues
@@ -2802,6 +2946,9 @@ class MFConductor {
         if (this.consoleAutoScroll) {
             this.scrollConsoleToBottom();
         }
+        
+        // Debug log to browser console
+        console.log(`[Console] ${type}: ${text}`);
     }
     
     saveConsoleDebounced() {
@@ -3875,7 +4022,7 @@ class MFConductor {
                         ${node.provided_nodes && node.provided_nodes.length > 0 ? `
                         <div class="expanded-detail-nodes">
                             <div class="nodes-toggle" onclick="this.parentElement.classList.toggle('expanded')">
-                                <svg class="nodes-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg class="nodes-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
                                     <polyline points="9 18 15 12 9 6"/>
                                 </svg>
                                 <span class="nodes-count">${node.provided_nodes.length} node${node.provided_nodes.length !== 1 ? 's' : ''}</span>
@@ -3885,9 +4032,6 @@ class MFConductor {
                                 <div class="nodes-list">
                                     ${node.provided_nodes.map(n => `<span class="node-name-item">${this.escapeHtml(n)}</span>`).join('')}
                                 </div>
-                            </div>
-                            <div class="nodes-hover-preview">
-                                ${node.provided_nodes.map(n => `<div class="preview-node-item">${this.escapeHtml(n)}</div>`).join('')}
                             </div>
                         </div>
                         ` : ''}
@@ -3934,7 +4078,7 @@ class MFConductor {
                 <div class="expanded-detail-actions">
                     ${node.is_git_repo ? `
                     <button class="btn btn-primary" onclick="app.updateNodeInline('${this.escapeHtml(node.folder_name)}')">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M23 4v6h-6"/>
                             <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
                         </svg>
@@ -3943,34 +4087,34 @@ class MFConductor {
                     ` : ''}
                     ${node.git_url ? `
                     <a class="btn btn-secondary" href="${this.escapeHtml(node.git_url)}" target="_blank">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
                             <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
                         </svg>
                         GitHub
                     </a>
                     ` : ''}
                     <button class="btn btn-secondary" onclick="app.openFolderInline('${this.escapeHtml(node.folder_name)}')">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
                         </svg>
                         Open Folder
                     </button>
                     <button class="btn ${isFav ? 'btn-warning' : 'btn-secondary'}" onclick="app.toggleFavorite('${this.escapeHtml(node.folder_name)}')">
-                        <svg viewBox="0 0 24 24" fill="${isFav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
+                        <svg viewBox="0 0 24 24" fill="${isFav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                         </svg>
                         ${isFav ? 'Favorited' : 'Favorite'}
                     </button>
                     <div class="action-spacer"></div>
                     <button class="btn btn-warning" onclick="app.deactivateNodeInline('${this.escapeHtml(node.folder_name)}')">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <circle cx="12" cy="12" r="10"/>
                             <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
                         </svg>
                         Deactivate
                     </button>
                     <button class="btn btn-danger" onclick="app.removeNodeInline('${this.escapeHtml(node.folder_name)}')">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                         </svg>
                         Remove
@@ -4015,14 +4159,14 @@ class MFConductor {
                 
                 switch (req.status) {
                     case 'installed':
-                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                             <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
                             <polyline points="22 4 12 14.01 9 11.01"/>
                         </svg>`;
                         statusText = req.message || req.version_spec || '';
                         break;
                     case 'missing':
-                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                             <circle cx="12" cy="12" r="10"/>
                             <line x1="15" y1="9" x2="9" y2="15"/>
                             <line x1="9" y1="9" x2="15" y2="15"/>
@@ -4031,7 +4175,7 @@ class MFConductor {
                         hint = `<span class="requirement-install-hint" data-package="${this.escapeHtml(req.raw || req.name)}" data-name="${this.escapeHtml(displayName)}" data-folder="${folderName}">Click to install</span>`;
                         break;
                     case 'warning':
-                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                             <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
                             <line x1="12" y1="9" x2="12" y2="13"/>
                             <line x1="12" y1="17" x2="12.01" y2="17"/>
@@ -4370,13 +4514,13 @@ class MFConductor {
                 
                 switch (req.status) {
                     case 'installed':
-                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                             <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
                             <polyline points="22 4 12 14.01 9 11.01"/>
                         </svg>`;
                         break;
                     case 'missing':
-                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                             <circle cx="12" cy="12" r="10"/>
                             <line x1="15" y1="9" x2="9" y2="15"/>
                             <line x1="9" y1="9" x2="15" y2="15"/>
@@ -4384,7 +4528,7 @@ class MFConductor {
                         hint = '<span class="requirement-install-hint">Click to install</span>';
                         break;
                     case 'warning':
-                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                             <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
                             <line x1="12" y1="9" x2="12" y2="13"/>
                             <line x1="12" y1="17" x2="12.01" y2="17"/>
@@ -6137,7 +6281,7 @@ class MFConductor {
         }
         
         // Set view class
-        container.className = `browse-nodes-container ${this.browseViewMode}-view`;
+        container.className = `browse-nodes-container ${this.browseViewMode || 'grid'}-view`;
         
         container.innerHTML = this.browseNodes.map(node => {
             const stars = node.stars || 0;
