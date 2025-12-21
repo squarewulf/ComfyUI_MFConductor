@@ -2,7 +2,7 @@
  * MF Conductor - Custom Node Manager
  * Frontend Application
  * 
- * @version 1.1.0
+ * @version 1.2.0
  * @author FriskCinema
  */
 
@@ -110,8 +110,8 @@ class MFConductor {
         // Settings
         this.settings = {
             theme: 'dark',
-            accent: 'blue',
-            customAccentColor: '#4a9eff',
+            accent: 'moss',
+            customAccentColor: '#8a9a5b',
             btnColorSuccess: null,
             btnColorWarning: null,
             btnColorDanger: null,
@@ -375,28 +375,32 @@ class MFConductor {
         await this.loadProfiles();
         this.renderProfilesGrid();
         this.updateComfyControls();
+        this.restoreConsoleFromStorage(); // Restore terminal history
         this.checkComfyStatus();
         // Don't load nodes immediately - wait until Nodes tab is clicked
     }
     
-    // Main Tab Navigation
+    // Main Tab Navigation (Sidebar)
     bindMainTabs() {
-        document.querySelectorAll('.main-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                const tabName = tab.dataset.tab;
-                this.switchMainTab(tabName);
-            });
-        });
+        // Sidebar navigation links are bound via onclick in HTML
+        // This method is kept for compatibility
     }
     
     async switchMainTab(tabName) {
-        // Update tab buttons
-        document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
-        document.querySelector(`.main-tab[data-tab="${tabName}"]`)?.classList.add('active');
+        // Update sidebar links
+        document.querySelectorAll('.sidebar-link').forEach(link => link.classList.remove('active'));
+        document.getElementById(`nav-${tabName}`)?.classList.add('active');
         
-        // Update tab content
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(`tab-${tabName}`)?.classList.add('active');
+        // Update tab content - hide all, show selected
+        document.querySelectorAll('.tab-content').forEach(c => {
+            c.classList.add('hidden');
+            c.classList.remove('active');
+        });
+        const tabContent = document.getElementById(`tab-${tabName}`);
+        if (tabContent) {
+            tabContent.classList.remove('hidden');
+            tabContent.classList.add('active');
+        }
         
         this.currentTab = tabName;
         
@@ -432,102 +436,247 @@ class MFConductor {
         const grid = document.getElementById('profiles-grid');
         if (!grid) return;
         
-        const profileNames = Object.keys(this.profiles).sort();
+        // Get filter/sort options
+        const searchInput = document.getElementById('profiles-search');
+        const sortSelect = document.getElementById('profiles-sort');
+        const searchTerm = (searchInput?.value || '').toLowerCase();
+        const sortBy = sortSelect?.value || 'name';
+        
+        // Filter profiles
+        let profileEntries = Object.entries(this.profiles).filter(([name, profile]) => {
+            if (searchTerm && !name.toLowerCase().includes(searchTerm)) {
+                return false;
+            }
+            return true;
+        });
+        
+        // Sort profiles
+        const sortDir = this.profilesSortDir || 'asc';
+        profileEntries.sort((a, b) => {
+            let cmp = 0;
+            if (sortBy === 'name') {
+                cmp = a[0].localeCompare(b[0]);
+            } else if (sortBy === 'nodes') {
+                const aNodes = (a[1].enabled || []).length || 999; // All = 999 (high)
+                const bNodes = (b[1].enabled || []).length || 999;
+                cmp = aNodes - bNodes;
+            } else if (sortBy === 'default') {
+                const aDefault = a[1].is_default ? 0 : 1;
+                const bDefault = b[1].is_default ? 0 : 1;
+                cmp = aDefault - bDefault;
+            }
+            return sortDir === 'desc' ? -cmp : cmp;
+        });
         
         // Update profile count
         const countEl = document.getElementById('profiles-count');
+        const totalProfiles = Object.keys(this.profiles).length;
         if (countEl) {
-            countEl.textContent = `${profileNames.length} profile${profileNames.length !== 1 ? 's' : ''}`;
+            if (searchTerm) {
+                countEl.textContent = `${profileEntries.length} of ${totalProfiles} profiles`;
+            } else {
+                countEl.textContent = `${totalProfiles} profile${totalProfiles !== 1 ? 's' : ''}`;
+            }
         }
         
-        // Bind import button (once)
-        const importBtn = document.getElementById('import-profile-btn');
-        if (importBtn && !importBtn.dataset.bound) {
-            importBtn.addEventListener('click', () => this.importProfile());
-            importBtn.dataset.bound = 'true';
-        }
+        // Bind buttons (once)
+        this.bindProfilesToolbar();
         
+        // Get view mode
+        const viewMode = this.profilesViewMode || 'grid';
+        grid.className = viewMode === 'list' ? 'profiles-list' : 'profiles-grid';
         
         let html = '';
         
         // Render existing profiles
-        for (const name of profileNames) {
-            const profile = this.profiles[name];
+        for (const [name, profile] of profileEntries) {
             const isDefault = profile.is_default || false;
             const avatar = profile.avatar || 'default.svg';
-            // Empty enabled list = all nodes, show "All" instead of count
             const enabledList = profile.enabled || [];
             const nodeCountText = enabledList.length > 0 ? `${enabledList.length} nodes` : 'All nodes';
             
-            html += `
-                <div class="profile-tile ${isDefault ? 'default' : ''}" data-profile="${this.escapeHtml(name)}">
-                    <button class="profile-export-btn" 
-                            onclick="event.stopPropagation(); app.exportProfile('${this.escapeHtml(name)}')"
-                            title="Export Profile">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                            <polyline points="17 8 12 3 7 8"/>
-                            <line x1="12" y1="3" x2="12" y2="15"/>
-                        </svg>
-                    </button>
-                    <button class="profile-star ${isDefault ? 'active' : ''}" 
-                            onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeHtml(name)}')"
-                            title="${isDefault ? 'Remove as default' : 'Set as default'}">
-                        <svg viewBox="0 0 24 24" fill="${isDefault ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
-                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                        </svg>
-                    </button>
-                    <div class="profile-tile-content">
-                        <div class="profile-tile-avatar">
+            if (viewMode === 'list') {
+                // List view row
+                html += `
+                    <div class="profile-row ${isDefault ? 'default' : ''}" data-profile="${this.escapeHtml(name)}">
+                        <div class="profile-row-avatar">
                             <img src="${this.escapeHtml(avatar)}" alt="${this.escapeHtml(name)}" onerror="this.src='default.svg'">
                         </div>
-                        <div class="profile-tile-info">
-                            <div class="profile-tile-name">${this.escapeHtml(name)}</div>
-                            <div class="profile-tile-meta">${nodeCountText}</div>
+                        <div class="profile-row-name">
+                            <span class="name">${this.escapeHtml(name)}</span>
+                            ${isDefault ? '<span class="default-badge">Default</span>' : ''}
+                        </div>
+                        <div class="profile-row-nodes">${nodeCountText}</div>
+                        <div class="profile-row-actions">
+                            <button class="btn-glass btn-sm btn-success" onclick="event.stopPropagation(); app.handleProfileAction('launch', '${this.escapeHtml(name)}')" title="Launch">
+                                <i class="fa-solid fa-play"></i>
+                            </button>
+                            <button class="btn-glass btn-sm" onclick="event.stopPropagation(); app.handleProfileAction('edit', '${this.escapeHtml(name)}')" title="Edit">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="btn-glass btn-sm" onclick="event.stopPropagation(); app.exportProfile('${this.escapeHtml(name)}')" title="Export">
+                                <i class="fa-solid fa-download"></i>
+                            </button>
+                            <button class="btn-glass btn-sm ${isDefault ? 'btn-warning' : ''}" onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeHtml(name)}')" title="${isDefault ? 'Remove default' : 'Set as default'}">
+                                <i class="fa-solid fa-star"></i>
+                            </button>
                         </div>
                     </div>
-                    <div class="profile-tile-actions">
-                        <button class="profile-action-btn launch" onclick="event.stopPropagation(); app.handleProfileAction('launch', '${this.escapeHtml(name)}')" title="Launch">
+                `;
+            } else {
+                // Grid view tile
+                html += `
+                    <div class="profile-tile ${isDefault ? 'default' : ''}" data-profile="${this.escapeHtml(name)}">
+                        <button class="profile-export-btn" 
+                                onclick="event.stopPropagation(); app.exportProfile('${this.escapeHtml(name)}')"
+                                title="Export Profile">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polygon points="5 3 19 12 5 21 5 3"/>
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
                             </svg>
-                            <span>Launch</span>
                         </button>
-                        <button class="profile-action-btn edit" onclick="event.stopPropagation(); app.handleProfileAction('edit', '${this.escapeHtml(name)}')" title="Edit">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        <button class="profile-star ${isDefault ? 'active' : ''}" 
+                                onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeHtml(name)}')"
+                                title="${isDefault ? 'Remove as default' : 'Set as default'}">
+                            <svg viewBox="0 0 24 24" fill="${isDefault ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                             </svg>
-                            <span>Edit</span>
                         </button>
+                        <div class="profile-tile-content">
+                            <div class="profile-tile-avatar">
+                                <img src="${this.escapeHtml(avatar)}" alt="${this.escapeHtml(name)}" onerror="this.src='default.svg'">
+                            </div>
+                            <div class="profile-tile-info">
+                                <div class="profile-tile-name">${this.escapeHtml(name)}</div>
+                                <div class="profile-tile-meta">${nodeCountText}</div>
+                            </div>
+                        </div>
+                        <div class="profile-tile-actions">
+                            <button class="profile-action-btn launch" onclick="event.stopPropagation(); app.handleProfileAction('launch', '${this.escapeHtml(name)}')" title="Launch">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="5 3 19 12 5 21 5 3"/>
+                                </svg>
+                                <span>Launch</span>
+                            </button>
+                            <button class="profile-action-btn edit" onclick="event.stopPropagation(); app.handleProfileAction('edit', '${this.escapeHtml(name)}')" title="Edit">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                                <span>Edit</span>
+                            </button>
+                        </div>
                     </div>
-                </div>
-            `;
+                `;
+            }
         }
         
-        // Add "Create Profile" tile
-        html += `
-            <div class="profile-tile profile-tile-add" onclick="app.createNewProfile()">
-                <div class="profile-tile-content">
-                    <div class="profile-tile-avatar">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="12" y1="5" x2="12" y2="19"/>
-                            <line x1="5" y1="12" x2="19" y2="12"/>
-                        </svg>
+        // Add "Create Profile" tile/row (only if not searching)
+        if (!searchTerm) {
+            if (viewMode === 'list') {
+                html += `
+                    <div class="profile-row profile-row-add" onclick="app.createNewProfile()">
+                        <div class="profile-row-avatar">
+                            <i class="fa-solid fa-plus"></i>
+                        </div>
+                        <div class="profile-row-name">
+                            <span class="name">Create New Profile</span>
+                        </div>
+                        <div class="profile-row-nodes"></div>
+                        <div class="profile-row-actions"></div>
                     </div>
-                    <div class="profile-tile-info">
-                        <div class="profile-tile-name">Add Profile</div>
+                `;
+            } else {
+                html += `
+                    <div class="profile-tile profile-tile-add" onclick="app.createNewProfile()">
+                        <div class="profile-tile-content">
+                            <div class="profile-tile-avatar">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"/>
+                                    <line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                            </div>
+                            <div class="profile-tile-info">
+                                <div class="profile-tile-name">Add Profile</div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </div>
-        `;
+                `;
+            }
+        }
         
         grid.innerHTML = html;
         
-        // Bind right-click context menu to profile tiles
-        grid.querySelectorAll('.profile-tile:not(.profile-tile-add)').forEach(tile => {
+        // Bind right-click context menu to profile tiles/rows
+        grid.querySelectorAll('.profile-tile:not(.profile-tile-add), .profile-row:not(.profile-row-add)').forEach(tile => {
             tile.addEventListener('contextmenu', (e) => this.showProfileContextMenu(e, tile.dataset.profile));
         });
+    }
+    
+    bindProfilesToolbar() {
+        // Only bind once
+        if (this._profilesToolbarBound) return;
+        this._profilesToolbarBound = true;
+        
+        // Import button
+        const importBtn = document.getElementById('import-profile-btn');
+        if (importBtn) {
+            importBtn.addEventListener('click', () => this.importProfile());
+        }
+        
+        // Create button
+        const createBtn = document.getElementById('create-profile-btn');
+        if (createBtn) {
+            createBtn.addEventListener('click', () => this.createNewProfile());
+        }
+        
+        // Search
+        const searchInput = document.getElementById('profiles-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', () => this.renderProfilesGrid());
+        }
+        
+        // Sort select
+        const sortSelect = document.getElementById('profiles-sort');
+        if (sortSelect) {
+            sortSelect.addEventListener('change', () => this.renderProfilesGrid());
+        }
+        
+        // Sort direction
+        const sortDirBtn = document.getElementById('profiles-sort-dir');
+        if (sortDirBtn) {
+            sortDirBtn.addEventListener('click', () => {
+                this.profilesSortDir = this.profilesSortDir === 'asc' ? 'desc' : 'asc';
+                const icon = sortDirBtn.querySelector('i');
+                if (icon) {
+                    icon.className = this.profilesSortDir === 'asc' 
+                        ? 'fa-solid fa-arrow-down-short-wide' 
+                        : 'fa-solid fa-arrow-up-short-wide';
+                }
+                this.renderProfilesGrid();
+            });
+        }
+        
+        // View toggle
+        const viewGridBtn = document.getElementById('profiles-view-grid');
+        const viewListBtn = document.getElementById('profiles-view-list');
+        if (viewGridBtn) {
+            viewGridBtn.addEventListener('click', () => {
+                this.profilesViewMode = 'grid';
+                viewGridBtn.classList.add('active');
+                viewListBtn?.classList.remove('active');
+                this.renderProfilesGrid();
+            });
+        }
+        if (viewListBtn) {
+            viewListBtn.addEventListener('click', () => {
+                this.profilesViewMode = 'list';
+                viewListBtn.classList.add('active');
+                viewGridBtn?.classList.remove('active');
+                this.renderProfilesGrid();
+            });
+        }
     }
     
     // ==================== PROFILE CONTEXT MENU ====================
@@ -548,9 +697,7 @@ class MFConductor {
         if (setDefaultItem && profile) {
             const isDefault = profile.is_default;
             setDefaultItem.innerHTML = `
-                <svg viewBox="0 0 24 24" fill="${isDefault ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
-                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                </svg>
+                <i class="fa-${isDefault ? 'solid' : 'regular'} fa-star w-4 text-center"></i>
                 ${isDefault ? 'Remove Default' : 'Set as Default'}
             `;
         }
@@ -1021,13 +1168,13 @@ class MFConductor {
         // Bind events
         this.bindProfileEditorEvents();
         
-        editor.style.display = 'flex';
+        editor.classList.add('show');
     }
     
     closeProfileEditor() {
         const editor = document.getElementById('profile-editor');
         if (editor) {
-            editor.style.display = 'none';
+            editor.classList.remove('show');
         }
         this.editingProfile = null;
     }
@@ -1832,7 +1979,7 @@ class MFConductor {
         const modal = document.getElementById('package-install-modal');
         const input = document.getElementById('package-name-input');
         if (modal) {
-            modal.style.display = 'flex';
+            modal.classList.add('show');
             if (input) {
                 input.value = '';
                 input.focus();
@@ -1842,7 +1989,7 @@ class MFConductor {
     
     closePackageInstallModal() {
         const modal = document.getElementById('package-install-modal');
-        if (modal) modal.style.display = 'none';
+        if (modal) modal.classList.remove('show');
     }
     
     async installPackageFromModal() {
@@ -2618,7 +2765,7 @@ class MFConductor {
         }
     }
     
-    appendToConsole(text, type = 'normal') {
+    appendToConsole(text, type = 'normal', skipSave = false) {
         const output = document.getElementById('console-output');
         if (!output) return;
         
@@ -2635,15 +2782,76 @@ class MFConductor {
         
         output.appendChild(line);
         
+        // Store in memory array
+        this.consoleOutput.push({ text, type, time: Date.now() });
+        
+        // Limit console lines to prevent memory issues
+        const maxLines = 2000;
+        const lines = output.querySelectorAll('.console-line');
+        while (lines.length > maxLines && this.consoleOutput.length > maxLines) {
+            lines[0]?.remove();
+            this.consoleOutput.shift();
+        }
+        
+        // Save to localStorage (debounced)
+        if (!skipSave) {
+            this.saveConsoleDebounced();
+        }
+        
         // Auto-scroll if enabled
         if (this.consoleAutoScroll) {
             this.scrollConsoleToBottom();
         }
+    }
+    
+    saveConsoleDebounced() {
+        // Debounce saving to avoid excessive writes
+        if (this._saveConsoleTimeout) {
+            clearTimeout(this._saveConsoleTimeout);
+        }
+        this._saveConsoleTimeout = setTimeout(() => {
+            this.saveConsoleToStorage();
+        }, 500);
+    }
+    
+    saveConsoleToStorage() {
+        try {
+            // Only save last 500 lines to localStorage
+            const toSave = this.consoleOutput.slice(-500);
+            localStorage.setItem('mfc_console_history', JSON.stringify(toSave));
+        } catch (e) {
+            // Storage full or unavailable - ignore
+        }
+    }
+    
+    restoreConsoleFromStorage() {
+        const output = document.getElementById('console-output');
+        if (!output) return;
         
-        // Limit console lines to prevent memory issues
-        const lines = output.querySelectorAll('.console-line');
-        if (lines.length > 5000) {
-            lines[0].remove();
+        try {
+            const saved = localStorage.getItem('mfc_console_history');
+            if (saved) {
+                const lines = JSON.parse(saved);
+                if (Array.isArray(lines) && lines.length > 0) {
+                    // Remove placeholder
+                    const placeholder = output.querySelector('.console-placeholder');
+                    if (placeholder) {
+                        placeholder.remove();
+                    }
+                    
+                    // Restore lines
+                    for (const item of lines) {
+                        this.appendToConsole(item.text, item.type || 'normal', true);
+                    }
+                    
+                    // Add separator
+                    this.appendToConsole('--- Session restored ---', 'info', true);
+                    
+                    this.log(`Restored ${lines.length} console lines from previous session`, 'info');
+                }
+            }
+        } catch (e) {
+            // Ignore restore errors
         }
     }
     
@@ -2683,6 +2891,11 @@ class MFConductor {
         `;
         
         this.consoleOutput = [];
+        
+        // Also clear localStorage
+        try {
+            localStorage.removeItem('mfc_console_history');
+        } catch (e) {}
     }
     
     async copyConsoleOutput() {
@@ -2881,14 +3094,18 @@ class MFConductor {
         }
         
         // View toggle
-        this.viewGridBtn.addEventListener('click', () => {
-            this.setViewMode('grid');
-            this.saveUserPreferences();
-        });
-        this.viewListBtn.addEventListener('click', () => {
-            this.setViewMode('list');
-            this.saveUserPreferences();
-        });
+        if (this.viewGridBtn) {
+            this.viewGridBtn.addEventListener('click', () => {
+                this.setViewMode('grid');
+                this.saveUserPreferences();
+            });
+        }
+        if (this.viewListBtn) {
+            this.viewListBtn.addEventListener('click', () => {
+                this.setViewMode('list');
+                this.saveUserPreferences();
+            });
+        }
         
         // Install modal
         this.installBtn.addEventListener('click', () => this.openInstallModal());
@@ -3093,8 +3310,8 @@ class MFConductor {
             const data = await response.json();
             this.nodes = data.nodes || [];
             
-            this.totalNodesEl.textContent = this.nodes.length;
-            this.scanTimeEl.textContent = `Last scan: ${this.formatDate(data.scanned_at)}`;
+            if (this.totalNodesEl) this.totalNodesEl.textContent = this.nodes.length;
+            if (this.scanTimeEl) this.scanTimeEl.textContent = `Last scan: ${this.formatDate(data.scanned_at)}`;
             
             this.log(`Loaded ${this.nodes.length} custom nodes successfully`, 'success');
             this.filterNodes();
@@ -3121,8 +3338,8 @@ class MFConductor {
             const data = await response.json();
             this.nodes = data.nodes || [];
             
-            this.totalNodesEl.textContent = this.nodes.length;
-            this.scanTimeEl.textContent = `Last scan: ${this.formatDate(data.scanned_at)}`;
+            if (this.totalNodesEl) this.totalNodesEl.textContent = this.nodes.length;
+            if (this.scanTimeEl) this.scanTimeEl.textContent = `Last scan: ${this.formatDate(data.scanned_at)}`;
             
             this.filterNodes();
             this.log(`Scan complete. Found ${this.nodes.length} custom nodes`, 'success');
@@ -3271,11 +3488,11 @@ class MFConductor {
         } catch (e) {}
         
         // Update button states
-        this.viewGridBtn.classList.toggle('active', mode === 'grid');
-        this.viewListBtn.classList.toggle('active', mode === 'list');
+        if (this.viewGridBtn) this.viewGridBtn.classList.toggle('active', mode === 'grid');
+        if (this.viewListBtn) this.viewListBtn.classList.toggle('active', mode === 'list');
         
         // Update list class
-        this.nodeList.classList.toggle('list-view', mode === 'list');
+        if (this.nodeList) this.nodeList.classList.toggle('list-view', mode === 'list');
         
         // Re-render (unless skipped during init)
         if (!skipRender) {
@@ -4443,12 +4660,12 @@ class MFConductor {
         this.gitUrlInput.value = '';
         this.folderNameInput.value = '';
         this.installDepsCheckbox.checked = true;
-        this.installModal.style.display = 'flex';
+        this.installModal.classList.add('show');
         this.gitUrlInput.focus();
     }
     
     closeInstallModal() {
-        this.installModal.style.display = 'none';
+        this.installModal.classList.remove('show');
     }
     
     async installFromUrl() {
@@ -4589,10 +4806,10 @@ class MFConductor {
             iconEl.innerHTML = icons[type] || icons.info;
             
             // Set button style
-            okBtn.className = `btn ${confirmClass || (type === 'danger' ? 'btn-danger' : 'btn-primary')}`;
+            okBtn.className = `btn-primary-glass ${confirmClass || (type === 'danger' ? 'btn-danger' : '')}`;
             
             // Show modal
-            modal.style.display = 'flex';
+            modal.classList.add('show');
             
             // Handle clicks
             const handleOk = () => {
@@ -4620,7 +4837,7 @@ class MFConductor {
             };
             
             const cleanup = () => {
-                modal.style.display = 'none';
+                modal.classList.remove('show');
                 okBtn.removeEventListener('click', handleOk);
                 cancelBtn.removeEventListener('click', handleCancel);
                 modal.removeEventListener('click', handleOverlay);
@@ -4670,7 +4887,7 @@ class MFConductor {
             cancelBtn.textContent = cancelText;
             
             // Show modal
-            modal.style.display = 'flex';
+            modal.classList.add('show');
             
             // Handle clicks
             const handleOk = () => {
@@ -4698,7 +4915,7 @@ class MFConductor {
             };
             
             const cleanup = () => {
-                modal.style.display = 'none';
+                modal.classList.remove('show');
                 okBtn.removeEventListener('click', handleOk);
                 cancelBtn.removeEventListener('click', handleCancel);
                 modal.removeEventListener('click', handleOverlay);
@@ -5471,6 +5688,17 @@ class MFConductor {
      * @param {number} count - Number of updates available
      */
     updateNodesBadge(count) {
+        // Update the sidebar nodes update badge
+        const nodesUpdateBadge = document.getElementById('nodes-update-badge');
+        if (nodesUpdateBadge) {
+            if (count > 0) {
+                nodesUpdateBadge.classList.remove('hidden');
+            } else {
+                nodesUpdateBadge.classList.add('hidden');
+            }
+        }
+        
+        // Legacy support for old tab badge
         const nodesTab = document.querySelector('.main-tab[data-tab="nodes"]');
         if (!nodesTab) return;
         
@@ -5708,7 +5936,7 @@ class MFConductor {
     async openBrowseModal() {
         const modal = document.getElementById('browse-modal');
         if (modal) {
-            modal.style.display = 'flex';
+            modal.classList.add('show');
             this.initBrowseControls();
             await this.loadBrowseNodes();
         }
@@ -5815,7 +6043,7 @@ class MFConductor {
     closeBrowseModal() {
         const modal = document.getElementById('browse-modal');
         if (modal) {
-            modal.style.display = 'none';
+            modal.classList.remove('show');
         }
     }
     
@@ -6464,7 +6692,7 @@ class MFConductor {
     openSettingsModal() {
         const modal = document.getElementById('settings-modal');
         if (modal) {
-            modal.style.display = 'flex';
+            modal.classList.add('show');
             this.updateSettingsModal();
         }
     }
@@ -6472,7 +6700,7 @@ class MFConductor {
     closeSettingsModal() {
         const modal = document.getElementById('settings-modal');
         if (modal) {
-            modal.style.display = 'none';
+            modal.classList.remove('show');
         }
     }
     
@@ -6804,12 +7032,12 @@ class MFConductor {
         const originalPreview = document.getElementById('color-preview-current');
         if (originalPreview) originalPreview.style.background = currentColor;
         
-        modal.style.display = 'flex';
+        modal.classList.add('show');
     }
     
     closeColorPicker() {
         const modal = document.getElementById('color-picker-modal');
-        if (modal) modal.style.display = 'none';
+        if (modal) modal.classList.remove('show');
         this.colorPicker.isOpen = false;
     }
     
@@ -6941,7 +7169,7 @@ class MFConductor {
     openProfilesModal() {
         const modal = document.getElementById('profiles-modal');
         if (modal) {
-            modal.style.display = 'flex';
+            modal.classList.add('show');
             this.initProfilesUI();
         }
     }
@@ -6949,7 +7177,7 @@ class MFConductor {
     closeProfilesModal() {
         const modal = document.getElementById('profiles-modal');
         if (modal) {
-            modal.style.display = 'none';
+            modal.classList.remove('show');
         }
     }
     

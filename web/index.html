@@ -5,822 +5,744 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MFConductor - Better Control. Better ComfyUI.</title>
     <link rel="icon" type="image/svg+xml" href="mfconductor_logo.svg">
-    <link rel="stylesheet" href="style.css">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'base': '#0f1115',
+                        'sidebar': '#161b22',
+                        'card': '#1e293b',
+                        'card-hover': '#283548',
+                        'border-subtle': 'rgba(255, 255, 255, 0.05)',
+                        'border-light': 'rgba(255, 255, 255, 0.1)',
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Custom styles for complex components -->
+    <link rel="stylesheet" href="style.css">
 </head>
-<body>
-    <div class="app-container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-left">
-                <div class="logo">
-                    <svg class="logo-icon" viewBox="0 0 388.15 344.51" fill="currentColor">
-                        <path d="M231.46,184.62v1c.18-.34.38-.68.57-1.01-.19,0-.38.01-.57.01ZM226.93,184.47v.02l.52-1c-.18.32-.36.65-.52.98Z"/>
-                        <path d="M119.35,286.29c-19.17.33-44.79,3.24-46.01-23.2,0,0,0-128.35,0-128.35,19.17-.33,44.79-3.24,46.01,23.2,0,0,0,128.35,0,128.35ZM170.32,344.26c-19.17.32-44.79,3.24-46.01-23.2,0,0,0-186.51,0-186.51,19.17-.32,44.79-3.24,46.01,23.2,0,0,0,186.51,0,186.51ZM221.29,321.06c-1.22,26.45-26.88,23.52-46.01,23.2v-96.31c7.47-15.72,32.33-10.76,46.01-11.46v84.57ZM275.64,208.33c-3.58,46.05-78.43,6.96-100.36,31.56.6-6.9-1.54-34.07,1.77-40.07,3.61-8.69,12.02-14.31,21.43-14.31h77.16v22.82Z"/>
-                        <path d="M216,94.07c.62-5.52-2.16-9.58-7.85-10.03-11.87-.93-24.95.71-36.95.02-1.69-.04-3.09-1.33-3.29-2.99l10.26-36.28c.6-1.54,1.26-2.27,2.97-2.43,3.9-.37,9.32-.16,13.39-.22,8.43-.11,18.38.74,26.57,0,14.75-1.31,15.25-21.21,19.09-31.88.5-4.74-1.4-8.53-6.18-9.74-15.28.06-30.87-1-46.17-.28-4.83.23-8.64,1.48-12.09,4.97-5.19,5.24-5.24,14.06-7.92,20.58-.43,1.04-1.21,2.18-2.43,2.32-5.79.68-12.35-1.08-18.03,1.19-3.74,1.49-6.78,4.45-8.68,7.95l-14.65,49.82v5.18c.47.69.67,1.54,1.11,2.23,3.66,5.66,12.41,2.86,17.98,3.62,1.93.26,2.88,1.87,2.7,3.74-.63,6.52-7.41,15.72-1.92,21.61,1.49,1.6,3.77,2.35,5.92,2.5,14.9,1.04,30.99-.8,46.02,0,5.52-.28,11.25-4.35,13.59-9.3,1.05-2.22,6.26-19.87,6.57-22.59Z"/>
-                        <path d="M176.43,156.9c1.15-11.27,10.87-19.04,21.83-19.75,26.41-1.72,54.69,1.31,81.3.03,1.04-.06,2.07-.29,3.04-.63,4.09-1.44,11.68-11.32,14.7-15.06,2.81-3.48,5.01-8.23,8.86-10.71s8.91-4.13,13.16-5.39c-.25-2,.38-3.97.47-5.84,1.26-26.81.64-54.24,2.44-80.98.16-2.41.5-6.99,3.55-7.46,4.2-.65,4.46,5.07,4.63,7.85,1.19,19.65,1.35,39.72,2.04,59.4.13,3.79-.04,24.94.89,26.59.54.96,2.5,1.77,3.48,4.46,3.72,10.31,2.3,18.3-2.68,27.63-9.6,18-27.95,42.17-50.08,43.69-28.46,1.95-59.12-1.5-87.81-.01-8.02.6-14.43,4.49-19.81,10.17v-33.97Z"/>
-                        <path d="M68.62,186.4c-21.95-1.59-55.34,7.56-61.13-21.89C4.05,147.02,3.13,128.54,0,110.94c-.08-14.37,8.83-17.26,21.41-15.23,20.05,3.24,16.72,19.74,22.6,35.26,2.65,6.98,8.14,4.12,13.59,6.39,4.5,1.87,11.02,9.32,11.02,14.24v34.79Z"/>
-                    </svg>
-                    <span class="logo-text">MF<span class="logo-accent">Conductor</span></span>
-                    <span class="logo-tagline">Better Control. Better ComfyUI.</span>
+<body class="h-screen overflow-hidden flex bg-base text-slate-200 font-['Inter'] text-sm antialiased selection:bg-indigo-500 selection:text-white">
+
+    <!-- SIDEBAR -->
+    <aside class="w-64 bg-sidebar border-r border-border-subtle flex flex-col justify-between flex-shrink-0">
+        <!-- Sidebar Header -->
+        <div>
+            <div class="h-16 flex items-center px-5 border-b border-border-subtle gap-3">
+                <svg class="h-8 w-8 accent-text" viewBox="0 0 388.15 344.51" fill="currentColor">
+                    <path d="M231.46,184.62v1c.18-.34.38-.68.57-1.01-.19,0-.38.01-.57.01ZM226.93,184.47v.02l.52-1c-.18.32-.36.65-.52.98Z"/>
+                    <path d="M119.35,286.29c-19.17.33-44.79,3.24-46.01-23.2,0,0,0-128.35,0-128.35,19.17-.33,44.79-3.24,46.01,23.2,0,0,0,128.35,0,128.35ZM170.32,344.26c-19.17.32-44.79,3.24-46.01-23.2,0,0,0-186.51,0-186.51,19.17-.32,44.79-3.24,46.01,23.2,0,0,0,186.51,0,186.51ZM221.29,321.06c-1.22,26.45-26.88,23.52-46.01,23.2v-96.31c7.47-15.72,32.33-10.76,46.01-11.46v84.57ZM275.64,208.33c-3.58,46.05-78.43,6.96-100.36,31.56.6-6.9-1.54-34.07,1.77-40.07,3.61-8.69,12.02-14.31,21.43-14.31h77.16v22.82Z"/>
+                    <path d="M216,94.07c.62-5.52-2.16-9.58-7.85-10.03-11.87-.93-24.95.71-36.95.02-1.69-.04-3.09-1.33-3.29-2.99l10.26-36.28c.6-1.54,1.26-2.27,2.97-2.43,3.9-.37,9.32-.16,13.39-.22,8.43-.11,18.38.74,26.57,0,14.75-1.31,15.25-21.21,19.09-31.88.5-4.74-1.4-8.53-6.18-9.74-15.28.06-30.87-1-46.17-.28-4.83.23-8.64,1.48-12.09,4.97-5.19,5.24-5.24,14.06-7.92,20.58-.43,1.04-1.21,2.18-2.43,2.32-5.79.68-12.35-1.08-18.03,1.19-3.74,1.49-6.78,4.45-8.68,7.95l-14.65,49.82v5.18c.47.69.67,1.54,1.11,2.23,3.66,5.66,12.41,2.86,17.98,3.62,1.93.26,2.88,1.87,2.7,3.74-.63,6.52-7.41,15.72-1.92,21.61,1.49,1.6,3.77,2.35,5.92,2.5,14.9,1.04,30.99-.8,46.02,0,5.52-.28,11.25-4.35,13.59-9.3,1.05-2.22,6.26-19.87,6.57-22.59Z"/>
+                    <path d="M176.43,156.9c1.15-11.27,10.87-19.04,21.83-19.75,26.41-1.72,54.69,1.31,81.3.03,1.04-.06,2.07-.29,3.04-.63,4.09-1.44,11.68-11.32,14.7-15.06,2.81-3.48,5.01-8.23,8.86-10.71s8.91-4.13,13.16-5.39c-.25-2,.38-3.97.47-5.84,1.26-26.81.64-54.24,2.44-80.98.16-2.41.5-6.99,3.55-7.46,4.2-.65,4.46,5.07,4.63,7.85,1.19,19.65,1.35,39.72,2.04,59.4.13,3.79-.04,24.94.89,26.59.54.96,2.5,1.77,3.48,4.46,3.72,10.31,2.3,18.3-2.68,27.63-9.6,18-27.95,42.17-50.08,43.69-28.46,1.95-59.12-1.5-87.81-.01-8.02.6-14.43,4.49-19.81,10.17v-33.97Z"/>
+                    <path d="M68.62,186.4c-21.95-1.59-55.34,7.56-61.13-21.89C4.05,147.02,3.13,128.54,0,110.94c-.08-14.37,8.83-17.26,21.41-15.23,20.05,3.24,16.72,19.74,22.6,35.26,2.65,6.98,8.14,4.12,13.59,6.39,4.5,1.87,11.02,9.32,11.02,14.24v34.79Z"/>
+                </svg>
+                <div class="flex flex-col">
+                    <span class="font-bold text-base text-white tracking-tight">MF<span class="accent-text">Conductor</span></span>
+                    <span class="text-[10px] text-slate-500">Better Control. Better ComfyUI.</span>
                 </div>
-                <span class="version-badge">v1.1</span>
             </div>
-            <div class="header-right">
-                <span class="header-status" id="header-status"></span>
-                <div class="comfy-controls">
-                    <button class="btn btn-success comfy-btn" id="launch-comfy-btn" title="Launch ComfyUI with default profile" disabled>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                            <polygon points="5 3 19 12 5 21 5 3"/>
-                        </svg>
-                        Launch ComfyUI
-                    </button>
-                    <button class="btn btn-warning comfy-btn" id="restart-comfy-btn" title="Restart ComfyUI" disabled>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                            <path d="M23 4v6h-6"/>
-                            <path d="M1 20v-6h6"/>
-                            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                        </svg>
-                        Restart
-                    </button>
-                    <button class="btn btn-danger comfy-btn" id="stop-comfy-btn" title="Stop ComfyUI" disabled>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                            <rect x="6" y="6" width="12" height="12"/>
-                        </svg>
-                        Stop
-                    </button>
+
+            <!-- Navigation -->
+            <nav class="mt-4 px-2 space-y-1">
+                <a href="#" onclick="app.switchMainTab('profiles'); return false;" id="nav-profiles" 
+                   class="sidebar-link active flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
+                    <i class="fa-solid fa-user w-5 text-center"></i>
+                    <span>Profiles</span>
+                </a>
+                <a href="#" onclick="app.switchMainTab('nodes'); return false;" id="nav-nodes" 
+                   class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
+                    <i class="fa-solid fa-cubes w-5 text-center"></i>
+                    <span>Nodes</span>
+                    <span id="nodes-update-badge" class="ml-auto hidden h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
+                </a>
+                <a href="#" onclick="app.switchMainTab('packages'); return false;" id="nav-packages" 
+                   class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
+                    <i class="fa-solid fa-box w-5 text-center"></i>
+                    <span>Packages</span>
+                </a>
+                <a href="#" onclick="app.switchMainTab('console'); return false;" id="nav-console" 
+                   class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
+                    <i class="fa-solid fa-terminal w-5 text-center"></i>
+                    <span>Terminal</span>
+                </a>
+                <a href="#" onclick="app.switchMainTab('community'); return false;" id="nav-community" 
+                   class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
+                    <i class="fa-solid fa-users w-5 text-center"></i>
+                    <span>Community</span>
+                    <span class="ml-auto accent-badge text-[10px] font-bold px-2 py-0.5 rounded-full">SOON</span>
+                </a>
+            </nav>
+        </div>
+
+        <!-- Sidebar Footer -->
+        <div class="p-3 border-t border-border-subtle">
+            <div class="flex items-center gap-3 p-2.5 rounded-lg bg-white/5 border border-border-subtle">
+                <div id="comfy-status" class="flex items-center gap-2 flex-1 min-w-0">
+                    <span class="status-indicator stopped w-2 h-2 rounded-full bg-slate-500 flex-shrink-0"></span>
+                    <span class="status-text text-xs text-slate-400 truncate">Stopped</span>
                 </div>
-                <button class="settings-btn" id="settings-btn" title="Settings">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
-                    </svg>
+                <button class="text-slate-400 hover:text-white transition-colors" id="settings-btn" title="Settings">
+                    <i class="fa-solid fa-gear"></i>
                 </button>
-                <div class="comfy-status" id="comfy-status">
-                    <span class="status-indicator stopped"></span>
-                    <span class="status-text">Stopped</span>
+            </div>
+            <div class="mt-2 flex items-center justify-center gap-1 text-[10px] text-slate-600">
+                <span>v1.2</span>
+                <span>-</span>
+                <a href="https://friskcinema.com" target="_blank" class="hover:text-slate-400 transition-colors flex items-center gap-1">
+                    <img src="mflogo.webp" alt="FriskCinema" class="h-3 w-3 rounded-sm opacity-50">
+                    <span>FriskCinema</span>
+                </a>
+            </div>
+        </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="flex-1 flex flex-col min-w-0 bg-base relative">
+        
+        <!-- Top Bar -->
+        <header class="h-14 border-b border-border-subtle flex items-center justify-between px-6 bg-base/90 backdrop-blur sticky top-0 z-20">
+            <!-- Status Pills -->
+            <div class="flex items-center gap-3 text-xs">
+                <span id="header-status" class="hidden"></span>
+            </div>
+
+            <!-- Controls -->
+            <div class="flex items-center gap-3">
+                <!-- ComfyUI Controls -->
+                <div class="comfy-controls flex items-center gap-2">
+                    <button class="btn-topbar btn-success" id="launch-comfy-btn" title="Launch ComfyUI" disabled>
+                        <i class="fa-solid fa-play"></i>
+                        <span>Launch</span>
+                    </button>
+                    <button class="btn-topbar btn-warning" id="restart-comfy-btn" title="Restart ComfyUI" disabled>
+                        <i class="fa-solid fa-rotate"></i>
+                        <span>Restart</span>
+                    </button>
+                    <button class="btn-topbar btn-danger" id="stop-comfy-btn" title="Stop ComfyUI" disabled>
+                        <i class="fa-solid fa-stop"></i>
+                        <span>Stop</span>
+                    </button>
                 </div>
             </div>
         </header>
 
-        <!-- Main Tabs -->
-        <nav class="main-tabs">
-            <button class="main-tab active" data-tab="profiles">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
-                    <circle cx="12" cy="7" r="4"/>
-                </svg>
-                Profiles
-            </button>
-            <button class="main-tab" data-tab="nodes">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                    <line x1="3" y1="9" x2="21" y2="9"/>
-                    <line x1="9" y1="21" x2="9" y2="9"/>
-                </svg>
-                Nodes
-            </button>
-            <button class="main-tab" data-tab="packages">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
-                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                    <line x1="12" y1="22.08" x2="12" y2="12"/>
-                </svg>
-                Packages
-            </button>
-            <button class="main-tab" data-tab="console">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="4 17 10 11 4 5"/>
-                    <line x1="12" y1="19" x2="20" y2="19"/>
-                </svg>
-                Terminal
-            </button>
-            <button class="main-tab" data-tab="community">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                    <path d="M23 21v-2a4 4 0 00-3-3.87"/>
-                    <path d="M16 3.13a4 4 0 010 7.75"/>
-                </svg>
-                Community
-            </button>
-        </nav>
-
-        <!-- Tab Content -->
-        <main class="tab-content-container">
+        <!-- Scrollable Content Area -->
+        <div class="flex-1 overflow-y-auto" id="main-scroll-area">
+            
             <!-- Profiles Tab -->
             <div class="tab-content active" id="tab-profiles">
-                <div class="profiles-toolbar">
-                    <div class="profiles-toolbar-left">
-                        <span class="profiles-count" id="profiles-count">0 profiles</span>
-                    </div>
-                    <div class="profiles-toolbar-right">
-                        <button class="btn btn-icon" id="import-profile-btn" title="Import Profile">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                <polyline points="7 10 12 15 17 10"/>
-                                <line x1="12" y1="15" x2="12" y2="3"/>
-                            </svg>
-                        </button>
+                <!-- Profiles Toolbar -->
+                <div class="toolbar sticky top-0 z-10 bg-base/95 backdrop-blur border-b border-border-subtle p-4">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <!-- Search -->
+                        <div class="relative flex-1 min-w-[200px] max-w-sm">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm"></i>
+                            <input type="text" 
+                                   class="input-glass w-full pl-9 pr-4 py-2" 
+                                   id="profiles-search" 
+                                   placeholder="Search profiles..." 
+                                   autocomplete="off">
+                        </div>
+                        
+                        <!-- Sort -->
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs text-slate-500">Sort:</label>
+                            <select class="select-glass" id="profiles-sort">
+                                <option value="name">Name</option>
+                                <option value="nodes">Node Count</option>
+                                <option value="default">Default First</option>
+                            </select>
+                            <button class="btn-icon-glass" id="profiles-sort-dir" title="Toggle sort direction">
+                                <i class="fa-solid fa-arrow-down-short-wide"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- View Toggle -->
+                        <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
+                            <button class="btn-icon-glass view-btn active rounded-none border-0" id="profiles-view-grid" title="Grid View">
+                                <i class="fa-solid fa-grid-2"></i>
+                            </button>
+                            <button class="btn-icon-glass view-btn rounded-none border-0" id="profiles-view-list" title="List View">
+                                <i class="fa-solid fa-list"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- Actions -->
+                        <div class="flex items-center gap-2 ml-auto">
+                            <button class="btn-glass" id="import-profile-btn" title="Import Profile">
+                                <i class="fa-solid fa-download"></i>
+                                <span>Import</span>
+                            </button>
+                            <button class="btn-glass btn-success" id="create-profile-btn" title="Create New Profile">
+                                <i class="fa-solid fa-plus"></i>
+                                <span>New Profile</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
-                <div class="profiles-grid" id="profiles-grid">
-                    <!-- Profile tiles will be injected here -->
+                
+                <!-- Profiles Count -->
+                <div class="px-6 pt-4 pb-2 flex items-center justify-between">
+                    <span class="text-xs text-slate-500" id="profiles-count">0 profiles</span>
+                </div>
+                
+                <!-- Profiles Grid/List -->
+                <div class="px-6 pb-6">
+                    <div class="profiles-grid" id="profiles-grid">
+                        <!-- Profile tiles will be injected here -->
+                    </div>
                 </div>
             </div>
 
             <!-- Nodes Tab -->
-            <div class="tab-content" id="tab-nodes">
+            <div class="tab-content hidden" id="tab-nodes">
                 <!-- Toolbar -->
-                <div class="toolbar">
-                    <div class="search-container">
-                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="11" cy="11" r="8"/>
-                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                        </svg>
-                        <input type="text" class="search-input" id="search-input" placeholder="Search custom nodes..." autocomplete="off">
-                        <span class="search-hint">Press / to focus</span>
-                    </div>
-                    
-                    <div class="filter-group">
-                        <label class="filter-label">Sort by:</label>
-                        <select class="filter-select" id="sort-select">
-                            <option value="name">Name</option>
-                            <option value="date_added">Date Added</option>
-                            <option value="last_updated">Last Updated</option>
-                            <option value="author">Author</option>
-                            <option value="stars">GitHub Stars</option>
-                        </select>
-                        <button class="btn btn-icon sort-direction" id="sort-direction" title="Toggle sort direction">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 5v14M19 12l-7 7-7-7"/>
-                            </svg>
-                        </button>
-                    </div>
-                    
-                    <div class="filter-group">
-                        <button class="btn btn-icon filter-btn" id="filter-favorites" title="Show Favorites Only">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                            </svg>
-                        </button>
-                        <select class="filter-select filter-tag-select" id="filter-tag">
-                            <option value="">All Tags</option>
-                        </select>
-                        <div class="batch-tag-btns" id="batch-tag-btns" style="display: none;">
-                            <button class="btn btn-sm" id="batch-add-tag" title="Add tag to selected nodes">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
-                                    <line x1="7" y1="7" x2="7.01" y2="7"/>
-                                    <line x1="12" y1="12" x2="16" y2="12"/>
-                                    <line x1="14" y1="10" x2="14" y2="14"/>
-                                </svg>
+                <div class="toolbar sticky top-0 z-10 bg-base/95 backdrop-blur border-b border-border-subtle p-4">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <!-- Search -->
+                        <div class="relative flex-1 min-w-[200px] max-w-md">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
+                            <input type="text" class="input-glass w-full pl-10 pr-4" id="search-input" placeholder="Search custom nodes..." autocomplete="off">
+                            <span class="search-hint absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">/</span>
+                        </div>
+                        
+                        <!-- Sort -->
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs text-slate-500">Sort:</label>
+                            <select class="select-glass" id="sort-select">
+                                <option value="name">Name</option>
+                                <option value="date_added">Date Added</option>
+                                <option value="last_updated">Last Updated</option>
+                                <option value="author">Author</option>
+                                <option value="stars">GitHub Stars</option>
+                            </select>
+                            <button class="btn-icon-glass" id="sort-direction" title="Toggle sort direction">
+                                <i class="fa-solid fa-arrow-down-short-wide"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- Filters -->
+                        <div class="flex items-center gap-2">
+                            <button class="btn-icon-glass" id="filter-favorites" title="Show Favorites Only">
+                                <i class="fa-regular fa-star"></i>
+                            </button>
+                            <select class="select-glass" id="filter-tag">
+                                <option value="">All Tags</option>
+                            </select>
+                        </div>
+                        
+                        <div class="batch-tag-btns hidden flex items-center gap-2" id="batch-tag-btns">
+                            <button class="btn-glass btn-sm" id="batch-add-tag" title="Add tag to selected nodes">
+                                <i class="fa-solid fa-tag"></i>
                                 Add Tag
                             </button>
-                            <button class="btn btn-sm" id="batch-remove-tag" title="Remove tag from selected nodes">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
-                                    <line x1="7" y1="7" x2="7.01" y2="7"/>
-                                    <line x1="12" y1="12" x2="16" y2="12"/>
-                                </svg>
+                            <button class="btn-glass btn-sm" id="batch-remove-tag" title="Remove tag from selected nodes">
+                                <i class="fa-solid fa-tag"></i>
                                 Remove Tag
                             </button>
                         </div>
-                    </div>
-                    
-                    <div class="toolbar-actions">
-                        <button class="btn btn-icon" id="refresh-btn" title="Refresh Node List (R)">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M23 4v6h-6"/>
-                                <path d="M1 20v-6h6"/>
-                                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                            </svg>
-                        </button>
-                        <button class="btn btn-icon" id="check-updates-btn" title="Check for Updates (U)">
-                            <svg viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M21 10.12h-6.78l2.74-2.82c-2.73-2.7-7.15-2.8-9.88-.1-2.73 2.71-2.73 7.08 0 9.79s7.15 2.71 9.88 0C18.32 15.65 19 14.08 19 12.1h2c0 1.98-.88 4.55-2.64 6.29-3.51 3.48-9.21 3.48-12.72 0-3.5-3.47-3.53-9.11-.02-12.58s9.14-3.47 12.65 0L21 3v7.12zM12.5 8v4.25l3.5 2.08-.72 1.21L11 13V8h1.5z"/>
-                            </svg>
-                        </button>
-                        <button class="btn btn-secondary" id="browse-btn" title="Browse Available Nodes (B)">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="11" cy="11" r="8"/>
-                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                                <line x1="11" y1="8" x2="11" y2="14"/>
-                                <line x1="8" y1="11" x2="14" y2="11"/>
-                            </svg>
-                            Browse
-                        </button>
-                        <button class="btn btn-primary" id="install-btn" title="Install from URL (N)">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                <polyline points="7 10 12 15 17 10"/>
-                                <line x1="12" y1="15" x2="12" y2="3"/>
-                            </svg>
-                            Install
-                        </button>
-                    </div>
-                    
-                    <div class="view-toggle">
-                        <button class="btn btn-icon view-btn active" id="view-grid" title="Grid View">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="3" y="3" width="7" height="7"/>
-                                <rect x="14" y="3" width="7" height="7"/>
-                                <rect x="3" y="14" width="7" height="7"/>
-                                <rect x="14" y="14" width="7" height="7"/>
-                            </svg>
-                        </button>
-                        <button class="btn btn-icon view-btn" id="view-list" title="List View">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="8" y1="6" x2="21" y2="6"/>
-                                <line x1="8" y1="12" x2="21" y2="12"/>
-                                <line x1="8" y1="18" x2="21" y2="18"/>
-                                <line x1="3" y1="6" x2="3.01" y2="6"/>
-                                <line x1="3" y1="12" x2="3.01" y2="12"/>
-                                <line x1="3" y1="18" x2="3.01" y2="18"/>
-                            </svg>
-                        </button>
-                    </div>
-                    
-                    <div class="stats-container">
-                        <span class="stat-item">
-                            <span class="stat-value" id="total-nodes">0</span>
-                            <span class="stat-label">Total</span>
-                        </span>
-                        <span class="stat-divider"></span>
-                        <span class="stat-item">
-                            <span class="stat-value" id="shown-nodes">0</span>
-                            <span class="stat-label">Shown</span>
-                        </span>
+                        
+                        <!-- Actions -->
+                        <div class="flex items-center gap-2 ml-auto">
+                            <button class="btn-icon-glass" id="refresh-btn" title="Refresh Node List (R)">
+                                <i class="fa-solid fa-rotate"></i>
+                            </button>
+                            <button class="btn-icon-glass" id="check-updates-btn" title="Check for Updates (U)">
+                                <i class="fa-solid fa-clock-rotate-left"></i>
+                            </button>
+                            <button class="btn-glass" id="browse-btn" title="Browse Available Nodes (B)">
+                                <i class="fa-solid fa-compass"></i>
+                                Browse
+                            </button>
+                            <button class="btn-primary-glass" id="install-btn" title="Install from URL (N)">
+                                <i class="fa-solid fa-download"></i>
+                                Install
+                            </button>
+                        </div>
+                        
+                        <!-- View Toggle -->
+                        <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
+                            <button class="btn-icon-glass view-btn active rounded-none border-0" id="view-grid" title="Grid View">
+                                <i class="fa-solid fa-grid-2"></i>
+                            </button>
+                            <button class="btn-icon-glass view-btn rounded-none border-0" id="view-list" title="List View">
+                                <i class="fa-solid fa-list"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- Stats -->
+                        <div class="flex items-center gap-3 text-xs text-slate-500 pl-3">
+                            <span><span class="text-white font-medium" id="total-nodes">0</span> Total</span>
+                            <span><span class="text-white font-medium" id="shown-nodes">0</span> Shown</span>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Node List -->
-                <div class="node-list-container">
+                <div class="node-list-container p-4">
                     <div class="node-list" id="node-list">
                         <!-- Nodes will be injected here -->
                     </div>
                     
                     <!-- Loading State -->
-                    <div class="loading-state" id="loading-state">
-                        <div class="loading-spinner"></div>
-                        <p>Scanning custom nodes...</p>
+                    <div class="loading-state flex flex-col items-center justify-center py-20" id="loading-state">
+                        <div class="loader mb-4"></div>
+                        <p class="text-slate-400">Scanning custom nodes...</p>
                     </div>
                     
                     <!-- Empty State -->
-                    <div class="empty-state" id="empty-state" style="display: none;">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                            <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                        </svg>
-                        <p>No nodes found matching your search</p>
+                    <div class="empty-state hidden flex-col items-center justify-center py-20" id="empty-state">
+                        <i class="fa-solid fa-magnifying-glass text-4xl text-slate-600 mb-4"></i>
+                        <p class="text-slate-400">No nodes found matching your search</p>
                     </div>
                 </div>
             </div>
 
             <!-- Packages Tab -->
-            <div class="tab-content" id="tab-packages">
+            <div class="tab-content hidden" id="tab-packages">
                 <div class="packages-tab-content">
-                    <div class="packages-toolbar">
-                        <div class="search-container">
-                            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="11" cy="11" r="8"/>
-                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                            </svg>
-                            <input type="text" class="search-input" id="packages-tab-search" placeholder="Search packages..." autocomplete="off">
-                        </div>
-                        <button class="btn btn-primary btn-sm" id="packages-install-btn" title="Install New Package">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                <line x1="12" y1="5" x2="12" y2="19"/>
-                                <line x1="5" y1="12" x2="19" y2="12"/>
-                            </svg>
-                            Install
-                        </button>
-                        <button class="btn btn-secondary btn-sm" id="packages-check-updates-btn" title="Check for Updates">
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                                <path d="M21 10.12h-6.78l2.74-2.82c-2.73-2.7-7.15-2.8-9.88-.1-2.73 2.71-2.73 7.08 0 9.79s7.15 2.71 9.88 0C18.32 15.65 19 14.08 19 12.1h2c0 1.98-.88 4.55-2.64 6.29-3.51 3.48-9.21 3.48-12.72 0-3.5-3.47-3.53-9.11-.02-12.58s9.14-3.47 12.65 0L21 3v7.12zM12.5 8v4.25l3.5 2.08-.72 1.21L11 13V8h1.5z"/>
-                            </svg>
-                            Check Updates
-                        </button>
-                        <button class="btn btn-success btn-sm" id="packages-upgrade-all-btn" title="Upgrade All Outdated" style="display: none;">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                <path d="M12 19V5M5 12l7-7 7 7"/>
-                            </svg>
-                            Upgrade All
-                        </button>
-                        <div class="packages-filter-group">
-                            <select id="packages-sort" class="form-select-sm">
-                                <option value="name">Sort: Name</option>
-                                <option value="version">Sort: Version</option>
-                                <option value="size">Sort: Size</option>
-                            </select>
-                            <label class="packages-filter-toggle">
-                                <input type="checkbox" id="packages-show-outdated">
-                                <span>Outdated only</span>
-                            </label>
-                        </div>
-                        <div class="packages-view-toggle">
-                            <button class="btn btn-icon" id="packages-view-grid" title="Grid view">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="3" y="3" width="7" height="7"/>
-                                    <rect x="14" y="3" width="7" height="7"/>
-                                    <rect x="14" y="14" width="7" height="7"/>
-                                    <rect x="3" y="14" width="7" height="7"/>
-                                </svg>
+                    <div class="packages-toolbar sticky top-0 z-10 bg-base/95 backdrop-blur border-b border-border-subtle p-4">
+                        <div class="flex flex-wrap items-center gap-3">
+                            <div class="relative flex-1 min-w-[200px] max-w-md">
+                                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
+                                <input type="text" class="input-glass w-full pl-10" id="packages-tab-search" placeholder="Search packages..." autocomplete="off">
+                            </div>
+                            <button class="btn-primary-glass" id="packages-install-btn" title="Install New Package">
+                                <i class="fa-solid fa-plus"></i>
+                                Install
                             </button>
-                            <button class="btn btn-icon active" id="packages-view-list" title="List view">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <line x1="8" y1="6" x2="21" y2="6"/>
-                                    <line x1="8" y1="12" x2="21" y2="12"/>
-                                    <line x1="8" y1="18" x2="21" y2="18"/>
-                                    <line x1="3" y1="6" x2="3.01" y2="6"/>
-                                    <line x1="3" y1="12" x2="3.01" y2="12"/>
-                                    <line x1="3" y1="18" x2="3.01" y2="18"/>
-                                </svg>
+                            <button class="btn-glass" id="packages-check-updates-btn" title="Check for Updates">
+                                <i class="fa-solid fa-clock-rotate-left"></i>
+                                Check Updates
                             </button>
-                        </div>
-                        <button class="btn btn-icon" id="packages-refresh-btn" title="Refresh List">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M23 4v6h-6"/>
-                                <path d="M1 20v-6h6"/>
-                                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                            </svg>
-                        </button>
-                        <span class="packages-tab-stats" id="packages-tab-stats">Loading...</span>
-                    </div>
-                    <div class="packages-tab-list" id="packages-tab-list">
-                        <div class="loading-state">
-                            <div class="loading-spinner"></div>
-                            <p>Loading packages...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Package Install Modal -->
-            <div class="modal-overlay" id="package-install-modal" style="display: none;">
-                <div class="modal modal-sm">
-                    <div class="modal-header">
-                        <h2>Install Package</h2>
-                        <button class="btn btn-icon modal-close" onclick="app.closePackageInstallModal()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="18" y1="6" x2="6" y2="18"/>
-                                <line x1="6" y1="6" x2="18" y2="18"/>
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="form-group">
-                            <label for="package-name-input">Package Name</label>
-                            <input type="text" id="package-name-input" class="form-input" placeholder="e.g. numpy, torch==2.0.0">
-                            <small class="form-hint">You can specify version with == (e.g. numpy==1.24.0)</small>
+                            <button class="btn-glass btn-success hidden" id="packages-upgrade-all-btn" title="Upgrade All Outdated">
+                                <i class="fa-solid fa-arrow-up"></i>
+                                Upgrade All
+                            </button>
+                            <div class="flex items-center gap-2">
+                                <select id="packages-sort" class="select-glass">
+                                    <option value="name">Sort: Name</option>
+                                    <option value="version">Sort: Version</option>
+                                    <option value="size">Sort: Size</option>
+                                </select>
+                                <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                                    <input type="checkbox" id="packages-show-outdated" class="accent-indigo-500">
+                                    <span>Outdated only</span>
+                                </label>
+                            </div>
+                            <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
+                                <button class="btn-icon-glass rounded-none border-0" id="packages-view-grid" title="Grid view">
+                                    <i class="fa-solid fa-grid-2"></i>
+                                </button>
+                                <button class="btn-icon-glass rounded-none border-0 active" id="packages-view-list" title="List view">
+                                    <i class="fa-solid fa-list"></i>
+                                </button>
+                            </div>
+                            <button class="btn-icon-glass" id="packages-refresh-btn" title="Refresh List">
+                                <i class="fa-solid fa-rotate"></i>
+                            </button>
+                            <span class="text-xs text-slate-500" id="packages-tab-stats">Loading...</span>
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-secondary" onclick="app.closePackageInstallModal()">Cancel</button>
-                        <button class="btn btn-primary" id="package-install-confirm-btn" onclick="app.installPackageFromModal()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                <polyline points="7 10 12 15 17 10"/>
-                                <line x1="12" y1="15" x2="12" y2="3"/>
-                            </svg>
-                            Install
-                        </button>
+                    <div class="packages-tab-list p-4" id="packages-tab-list">
+                        <div class="loading-state flex flex-col items-center justify-center py-20">
+                            <div class="loader mb-4"></div>
+                            <p class="text-slate-400">Loading packages...</p>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Custom Confirm Modal -->
-            <div class="modal-overlay" id="confirm-modal" style="display: none;">
-                <div class="modal modal-confirm">
-                    <div class="confirm-icon" id="confirm-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"/>
-                            <line x1="12" y1="8" x2="12" y2="12"/>
-                            <line x1="12" y1="16" x2="12.01" y2="16"/>
-                        </svg>
-                    </div>
-                    <div class="confirm-title" id="confirm-title">Confirm Action</div>
-                    <div class="confirm-message" id="confirm-message">Are you sure?</div>
-                    <div class="confirm-actions">
-                        <button class="btn btn-secondary" id="confirm-cancel-btn">Cancel</button>
-                        <button class="btn btn-primary" id="confirm-ok-btn">OK</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Custom Prompt Modal -->
-            <div class="modal-overlay" id="prompt-modal" style="display: none;">
-                <div class="modal modal-prompt">
-                    <div class="prompt-title" id="prompt-title">Enter Value</div>
-                    <div class="prompt-message" id="prompt-message">Please enter a value:</div>
-                    <input type="text" class="prompt-input" id="prompt-input" placeholder="">
-                    <div class="prompt-actions">
-                        <button class="btn btn-secondary" id="prompt-cancel-btn">Cancel</button>
-                        <button class="btn btn-primary" id="prompt-ok-btn">OK</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Console Tab -->
-            <div class="tab-content" id="tab-console">
-                <div class="console-tab-content">
-                    <div class="console-header">
-                        <div class="console-title">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                                <polyline points="4 17 10 11 4 5"/>
-                                <line x1="12" y1="19" x2="20" y2="19"/>
-                            </svg>
-                            <span>ComfyUI Terminal Output</span>
+            <!-- Console/Terminal Tab -->
+            <div class="tab-content hidden h-full" id="tab-console">
+                <div class="terminal-container">
+                    <!-- Terminal Header -->
+                    <div class="terminal-header">
+                        <div class="flex items-center gap-3">
+                            <i class="fa-solid fa-terminal accent-text"></i>
+                            <span class="font-medium text-white">ComfyUI Terminal</span>
+                            <span class="text-xs text-slate-500" id="terminal-status">Ready</span>
                         </div>
-                        <div class="console-actions">
-                            <button class="btn btn-icon btn-sm" id="console-clear-btn" title="Clear Terminal">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                    <path d="M3 6h18"/>
-                                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/>
-                                    <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                                </svg>
+                        <div class="flex items-center gap-2">
+                            <button class="btn-icon-glass" id="console-clear-btn" title="Clear Terminal">
+                                <i class="fa-solid fa-trash"></i>
                             </button>
-                            <button class="btn btn-icon btn-sm active" id="console-scroll-btn" title="Auto-scroll (enabled)" data-autoscroll="true">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                    <path d="M12 5v14"/>
-                                    <path d="M19 12l-7 7-7-7"/>
-                                </svg>
+                            <button class="btn-icon-glass active" id="console-scroll-btn" title="Auto-scroll (enabled)" data-autoscroll="true">
+                                <i class="fa-solid fa-arrow-down"></i>
                             </button>
-                            <button class="btn btn-icon btn-sm" id="console-copy-btn" title="Copy All">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                                </svg>
+                            <button class="btn-icon-glass" id="console-copy-btn" title="Copy All">
+                                <i class="fa-regular fa-copy"></i>
                             </button>
                         </div>
                     </div>
-                    <div class="console-output" id="console-output">
-                        <div class="console-placeholder">
-                            <div class="loading-spinner" style="width: 32px; height: 32px; margin-bottom: 16px;"></div>
+                    
+                    <!-- Terminal Output (scrollable, fills available space) -->
+                    <div class="terminal-output" id="console-output">
+                        <div class="console-placeholder flex flex-col items-center justify-center h-full text-slate-500">
+                            <div class="loader mb-4"></div>
                             <p>Checking status...</p>
                         </div>
                     </div>
-                    <div class="console-input-section">
-                        <div class="console-input-header">
-                            <span class="input-label">Command Input</span>
-                            <span class="input-prefix">python.exe -m</span>
+                    
+                    <!-- Terminal Input (sticky bottom) -->
+                    <div class="terminal-input">
+                        <div class="terminal-input-label">
+                            <span class="text-slate-500">Command</span>
+                            <span class="accent-text font-mono">python.exe -m</span>
                         </div>
-                        <div class="console-input-row">
-                            <input type="text" class="console-input" id="console-command-input" 
-                                placeholder="pip install package_name  or  pip list  or  any module command..." 
+                        <div class="terminal-input-row">
+                            <span class="terminal-prompt">$</span>
+                            <input type="text" class="terminal-input-field" id="console-command-input" 
+                                placeholder="pip install package_name, pip list, pip show ..." 
                                 autocomplete="off">
-                            <button class="btn btn-primary" id="console-run-btn" title="Run Command">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                    <polygon points="5 3 19 12 5 21 5 3"/>
-                                </svg>
-                                Run
+                            <button class="btn-glass btn-success" id="console-run-btn" title="Run Command">
+                                <i class="fa-solid fa-play"></i>
+                                <span>Run</span>
                             </button>
                         </div>
-                        <div class="console-input-hint">
-                            Commands run in the ComfyUI Python environment. Examples: <code>pip install torch</code>, <code>pip list</code>, <code>pip show package</code>
+                        <div class="terminal-input-hint">
+                            Press <kbd>Enter</kbd> to run. Examples: <code>pip install torch</code>, <code>pip list</code>, <code>pip show numpy</code>
                         </div>
                     </div>
                 </div>
             </div>
 
             <!-- Community Tab -->
-            <div class="tab-content" id="tab-community">
-                <div class="coming-soon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="64" height="64">
-                        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                        <circle cx="9" cy="7" r="4"/>
-                        <path d="M23 21v-2a4 4 0 00-3-3.87"/>
-                        <path d="M16 3.13a4 4 0 010 7.75"/>
-                    </svg>
-                    <h2>Community Hub</h2>
-                    <p>Coming Soon</p>
-                    <p class="coming-soon-desc">Share profiles, discover popular node combinations, and connect with the ComfyUI community.</p>
+            <div class="tab-content hidden" id="tab-community">
+                <div class="flex flex-col items-center justify-center h-full py-20">
+                    <i class="fa-solid fa-users text-6xl text-slate-700 mb-6"></i>
+                    <h2 class="text-2xl font-bold text-white mb-2">Community Hub</h2>
+                    <p class="accent-text font-medium mb-4">Coming Soon</p>
+                    <p class="text-slate-500 text-center max-w-md">Share profiles, discover popular node combinations, and connect with the ComfyUI community.</p>
                 </div>
             </div>
-        </main>
+        </div>
 
-        <!-- Footer -->
-        <footer class="footer">
-            <span>MFConductor - Better Control. Better ComfyUI.</span>
-            <span class="footer-divider">|</span>
-            <span id="scan-time">Last scan: Never</span>
-            <span class="footer-divider">|</span>
-            <a href="https://friskcinema.com" target="_blank" class="powered-by">
-                <span>Powered by</span>
-                <img src="mflogo.webp" alt="FriskCinema" class="powered-by-logo">
-                <span>FriskCinema</span>
-            </a>
-        </footer>
+        <!-- Toast Notification Container -->
+        <div class="toast-container fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none" id="toast-container"></div>
+    </main>
 
-        <!-- Console Panel - Below footer -->
-        <div class="console-panel collapsed" id="console-panel">
-            <div class="console-resize-handle" id="console-resize-handle"></div>
-            <div class="console-header" id="console-header">
-                <div class="console-title">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="4 17 10 11 4 5"/>
-                        <line x1="12" y1="19" x2="20" y2="19"/>
-                    </svg>
-                    <span>Console</span>
-                    <span class="console-badge" id="console-badge">0</span>
-                </div>
-                <div class="console-actions">
-                    <button class="btn btn-icon console-clear" id="console-clear" title="Clear Console">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                        </svg>
-                    </button>
-                    <button class="btn btn-icon console-toggle" id="console-toggle" title="Toggle Console">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="18 15 12 9 6 15"/>
-                        </svg>
-                    </button>
+    <!-- Package Install Modal -->
+    <div class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm" id="package-install-modal">
+        <div class="modal-content glass-panel w-full max-w-md p-6 rounded-xl">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-lg font-semibold text-white">Install Package</h2>
+                <button class="btn-icon-glass" onclick="app.closePackageInstallModal()">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label for="package-name-input" class="block text-sm text-slate-400 mb-2">Package Name</label>
+                    <input type="text" id="package-name-input" class="input-glass w-full" placeholder="e.g. numpy, torch==2.0.0">
+                    <p class="text-xs text-slate-600 mt-1">You can specify version with == (e.g. numpy==1.24.0)</p>
                 </div>
             </div>
-            <div class="console-body" id="console-body">
-                <div class="console-content" id="console-content">
-                    <div class="console-welcome">
-                        <span class="console-timestamp">[System]</span>
-                        <span class="console-message">MF Conductor initialized. Ready for operations.</span>
-                    </div>
-                </div>
+            <div class="flex items-center justify-end gap-3 mt-6">
+                <button class="btn-glass" onclick="app.closePackageInstallModal()">Cancel</button>
+                <button class="btn-primary-glass" id="package-install-confirm-btn" onclick="app.installPackageFromModal()">
+                    <i class="fa-solid fa-download"></i>
+                    Install
+                </button>
             </div>
         </div>
     </div>
 
-    <!-- Profile Editor Page (hidden by default) -->
-    <div class="profile-editor-overlay" id="profile-editor" style="display: none;">
-        <div class="profile-editor">
-            <div class="profile-editor-header">
-                <h2 id="profile-editor-title">Create Profile</h2>
-                <button class="btn btn-icon" onclick="app.closeProfileEditor()">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+    <!-- Custom Confirm Modal -->
+    <div class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm" id="confirm-modal">
+        <div class="modal-content glass-panel w-full max-w-sm p-6 rounded-xl text-center">
+            <div class="confirm-icon text-4xl mb-4 text-amber-400" id="confirm-icon">
+                <i class="fa-solid fa-circle-exclamation"></i>
+            </div>
+            <div class="text-lg font-semibold text-white mb-2" id="confirm-title">Confirm Action</div>
+            <div class="text-slate-400 mb-6" id="confirm-message">Are you sure?</div>
+            <div class="flex items-center justify-center gap-3">
+                <button class="btn-glass" id="confirm-cancel-btn">Cancel</button>
+                <button class="btn-primary-glass" id="confirm-ok-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Prompt Modal -->
+    <div class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm" id="prompt-modal">
+        <div class="modal-content glass-panel w-full max-w-sm p-6 rounded-xl">
+            <div class="text-lg font-semibold text-white mb-2" id="prompt-title">Enter Value</div>
+            <div class="text-slate-400 mb-4" id="prompt-message">Please enter a value:</div>
+            <input type="text" class="input-glass w-full mb-6" id="prompt-input" placeholder="">
+            <div class="flex items-center justify-end gap-3">
+                <button class="btn-glass" id="prompt-cancel-btn">Cancel</button>
+                <button class="btn-primary-glass" id="prompt-ok-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profile Editor -->
+    <div class="profile-editor-overlay fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm" id="profile-editor">
+        <div class="profile-editor glass-panel absolute inset-4 lg:inset-8 rounded-xl flex flex-col overflow-hidden">
+            <div class="profile-editor-header flex items-center justify-between p-4 border-b border-border-subtle">
+                <h2 class="text-lg font-semibold text-white" id="profile-editor-title">Create Profile</h2>
+                <button class="btn-icon-glass" onclick="app.closeProfileEditor()">
+                    <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="profile-editor-body">
+            <div class="profile-editor-body flex-1 overflow-y-auto p-6">
                 <!-- Profile Info Section -->
-                <div class="profile-editor-section">
-                    <h3>Profile Info</h3>
-                    <div class="profile-info-row">
-                        <div class="profile-avatar-picker">
-                            <img src="default.svg" alt="Profile Avatar" id="profile-avatar-preview" class="profile-avatar-large">
-                            <button class="btn btn-secondary btn-sm" onclick="app.pickProfileAvatar()">Change Icon</button>
-                            <input type="file" id="profile-avatar-input" accept="image/*" style="display:none">
+                <div class="profile-editor-section mb-6">
+                    <h3 class="text-sm font-medium text-slate-400 mb-4">Profile Info</h3>
+                    <div class="flex items-start gap-6">
+                        <div class="profile-avatar-picker flex flex-col items-center gap-2">
+                            <img src="default.svg" alt="Profile Avatar" id="profile-avatar-preview" class="w-20 h-20 rounded-xl bg-card object-cover">
+                            <button class="btn-glass btn-sm" onclick="app.pickProfileAvatar()">Change Icon</button>
+                            <input type="file" id="profile-avatar-input" accept="image/*" class="hidden">
                         </div>
-                        <div class="profile-info-fields">
-                            <div class="form-group">
-                                <label for="profile-name-input">Profile Name</label>
-                                <input type="text" id="profile-name-input" class="form-input" placeholder="My Profile">
+                        <div class="flex-1 space-y-4">
+                            <div>
+                                <label for="profile-name-input" class="block text-sm text-slate-400 mb-1">Profile Name</label>
+                                <input type="text" id="profile-name-input" class="input-glass w-full" placeholder="My Profile">
                             </div>
-                            <div class="form-group">
-                                <label for="profile-desc-input">Description (optional)</label>
-                                <input type="text" id="profile-desc-input" class="form-input" placeholder="A brief description...">
+                            <div>
+                                <label for="profile-desc-input" class="block text-sm text-slate-400 mb-1">Description (optional)</label>
+                                <input type="text" id="profile-desc-input" class="input-glass w-full" placeholder="A brief description...">
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Profile Editor Tabs -->
-                <div class="profile-editor-tabs">
-                    <button class="profile-editor-tab active" data-tab="nodes">Nodes</button>
-                    <button class="profile-editor-tab" data-tab="packages">Packages</button>
-                    <button class="profile-editor-tab" data-tab="flags">Launch Flags</button>
+                <div class="profile-editor-tabs flex gap-1 mb-4 border-b border-border-subtle">
+                    <button class="profile-editor-tab active px-4 py-2 text-sm font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="nodes">Nodes</button>
+                    <button class="profile-editor-tab px-4 py-2 text-sm font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="packages">Packages</button>
+                    <button class="profile-editor-tab px-4 py-2 text-sm font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="flags">Launch Flags</button>
                 </div>
 
                 <!-- Nodes Tab -->
                 <div class="profile-editor-tab-content active" id="pe-tab-nodes">
-                    <div class="profile-nodes-panel">
-                        <div class="nodes-panel-left">
-                            <div class="panel-header">
-                                <span class="panel-title">Excluded Nodes</span>
-                                <span class="panel-count" id="pe-available-count">0</span>
+                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-4 h-[400px]">
+                        <div class="nodes-panel-left flex flex-col bg-card/50 rounded-lg border border-border-subtle overflow-hidden">
+                            <div class="panel-header flex items-center justify-between p-3 border-b border-border-subtle">
+                                <span class="text-sm font-medium text-slate-300">Excluded Nodes</span>
+                                <span class="text-xs bg-slate-700 px-2 py-0.5 rounded-full" id="pe-available-count">0</span>
                             </div>
-                            <div class="panel-toolbar">
-                                <input type="text" class="panel-search" id="pe-available-search" placeholder="Search...">
-                                <button class="btn btn-xs" id="pe-add-all-nodes" title="Add all">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                        <polyline points="13 17 18 12 13 7"/>
-                                        <polyline points="6 17 11 12 6 7"/>
-                                    </svg>
+                            <div class="panel-toolbar p-2 border-b border-border-subtle flex gap-2">
+                                <input type="text" class="input-glass flex-1 text-xs" id="pe-available-search" placeholder="Search...">
+                                <button class="btn-icon-glass" id="pe-add-all-nodes" title="Add all">
+                                    <i class="fa-solid fa-angles-right"></i>
                                 </button>
                             </div>
-                            <div class="nodes-list-scroll" id="pe-available-nodes-list"></div>
+                            <div class="nodes-list-scroll flex-1 overflow-y-auto p-2" id="pe-available-nodes-list"></div>
                         </div>
-                        <div class="nodes-panel-center">
-                            <button class="transfer-btn" id="pe-add-selected-nodes" title="Add selected">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="9 18 15 12 9 6"/>
-                                </svg>
+                        <div class="nodes-panel-center flex flex-col items-center justify-center gap-2">
+                            <button class="btn-icon-glass" id="pe-add-selected-nodes" title="Add selected">
+                                <i class="fa-solid fa-chevron-right"></i>
                             </button>
-                            <button class="transfer-btn" id="pe-remove-selected-nodes" title="Remove selected">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="15 18 9 12 15 6"/>
-                                </svg>
+                            <button class="btn-icon-glass" id="pe-remove-selected-nodes" title="Remove selected">
+                                <i class="fa-solid fa-chevron-left"></i>
                             </button>
                         </div>
-                        <div class="nodes-panel-right">
-                            <div class="panel-header">
-                                <span class="panel-title">Enabled Nodes</span>
-                                <span class="panel-count accent" id="pe-selected-count">0</span>
+                        <div class="nodes-panel-right flex flex-col bg-card/50 rounded-lg border border-border-subtle overflow-hidden">
+                            <div class="panel-header flex items-center justify-between p-3 border-b border-border-subtle">
+                                <span class="text-sm font-medium text-slate-300">Enabled Nodes</span>
+                                <span class="text-xs accent-bg text-white px-2 py-0.5 rounded-full" id="pe-selected-count">0</span>
                             </div>
-                            <div class="panel-toolbar">
-                                <input type="text" class="panel-search" id="pe-selected-search" placeholder="Search...">
-                                <button class="btn btn-xs" id="pe-remove-all-nodes" title="Remove all">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                        <polyline points="11 17 6 12 11 7"/>
-                                        <polyline points="18 17 13 12 18 7"/>
-                                    </svg>
+                            <div class="panel-toolbar p-2 border-b border-border-subtle flex gap-2">
+                                <input type="text" class="input-glass flex-1 text-xs" id="pe-selected-search" placeholder="Search...">
+                                <button class="btn-icon-glass" id="pe-remove-all-nodes" title="Remove all">
+                                    <i class="fa-solid fa-angles-left"></i>
                                 </button>
                             </div>
-                            <div class="nodes-list-scroll" id="pe-selected-nodes-list"></div>
+                            <div class="nodes-list-scroll flex-1 overflow-y-auto p-2" id="pe-selected-nodes-list"></div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Packages Tab -->
-                <div class="profile-editor-tab-content" id="pe-tab-packages">
-                    <div class="profile-nodes-panel">
-                        <div class="nodes-panel-left">
-                            <div class="panel-header">
-                                <span class="panel-title">Excluded Packages</span>
-                                <span class="panel-count" id="pe-excluded-pkg-count">0</span>
+                <div class="profile-editor-tab-content hidden" id="pe-tab-packages">
+                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-4 h-[400px]">
+                        <div class="nodes-panel-left flex flex-col bg-card/50 rounded-lg border border-border-subtle overflow-hidden">
+                            <div class="panel-header flex items-center justify-between p-3 border-b border-border-subtle">
+                                <span class="text-sm font-medium text-slate-300">Excluded Packages</span>
+                                <span class="text-xs bg-slate-700 px-2 py-0.5 rounded-full" id="pe-excluded-pkg-count">0</span>
                             </div>
-                            <div class="panel-toolbar">
-                                <input type="text" class="panel-search" id="pe-excluded-pkg-search" placeholder="Search...">
-                                <button class="btn btn-xs" id="pe-include-all-pkg" title="Include all →">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                        <polyline points="13 17 18 12 13 7"/>
-                                        <polyline points="6 17 11 12 6 7"/>
-                                    </svg>
+                            <div class="panel-toolbar p-2 border-b border-border-subtle flex gap-2">
+                                <input type="text" class="input-glass flex-1 text-xs" id="pe-excluded-pkg-search" placeholder="Search...">
+                                <button class="btn-icon-glass" id="pe-include-all-pkg" title="Include all">
+                                    <i class="fa-solid fa-angles-right"></i>
                                 </button>
                             </div>
-                            <div class="nodes-list-scroll" id="pe-excluded-pkg-list"></div>
+                            <div class="nodes-list-scroll flex-1 overflow-y-auto p-2" id="pe-excluded-pkg-list"></div>
                         </div>
-                        <div class="nodes-panel-center">
-                            <button class="transfer-btn" id="pe-include-selected-pkg" title="Include selected →">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="9 18 15 12 9 6"/>
-                                </svg>
+                        <div class="nodes-panel-center flex flex-col items-center justify-center gap-2">
+                            <button class="btn-icon-glass" id="pe-include-selected-pkg" title="Include selected">
+                                <i class="fa-solid fa-chevron-right"></i>
                             </button>
-                            <button class="transfer-btn" id="pe-exclude-selected-pkg" title="← Exclude selected">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="15 18 9 12 15 6"/>
-                                </svg>
+                            <button class="btn-icon-glass" id="pe-exclude-selected-pkg" title="Exclude selected">
+                                <i class="fa-solid fa-chevron-left"></i>
                             </button>
                         </div>
-                        <div class="nodes-panel-right">
-                            <div class="panel-header">
-                                <span class="panel-title">Included Packages</span>
-                                <span class="panel-count accent" id="pe-included-pkg-count">0</span>
+                        <div class="nodes-panel-right flex flex-col bg-card/50 rounded-lg border border-border-subtle overflow-hidden">
+                            <div class="panel-header flex items-center justify-between p-3 border-b border-border-subtle">
+                                <span class="text-sm font-medium text-slate-300">Included Packages</span>
+                                <span class="text-xs accent-bg text-white px-2 py-0.5 rounded-full" id="pe-included-pkg-count">0</span>
                             </div>
-                            <div class="panel-toolbar">
-                                <input type="text" class="panel-search" id="pe-included-pkg-search" placeholder="Search...">
-                                <button class="btn btn-xs" id="pe-exclude-all-pkg" title="← Exclude all">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                        <polyline points="11 17 6 12 11 7"/>
-                                        <polyline points="18 17 13 12 18 7"/>
-                                    </svg>
+                            <div class="panel-toolbar p-2 border-b border-border-subtle flex gap-2">
+                                <input type="text" class="input-glass flex-1 text-xs" id="pe-included-pkg-search" placeholder="Search...">
+                                <button class="btn-icon-glass" id="pe-exclude-all-pkg" title="Exclude all">
+                                    <i class="fa-solid fa-angles-left"></i>
                                 </button>
                             </div>
-                            <div class="nodes-list-scroll" id="pe-included-pkg-list"></div>
+                            <div class="nodes-list-scroll flex-1 overflow-y-auto p-2" id="pe-included-pkg-list"></div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Flags Tab -->
-                <div class="profile-editor-tab-content" id="pe-tab-flags">
-                    <div class="flags-grid" id="pe-flags-grid">
+                <div class="profile-editor-tab-content hidden" id="pe-tab-flags">
+                    <div class="flags-grid grid grid-cols-2 lg:grid-cols-3 gap-4" id="pe-flags-grid">
                         <!-- VRAM Management -->
-                        <div class="flag-group">
-                            <div class="flag-group-title">VRAM Management</div>
-                            <label class="flag-option"><input type="radio" name="pe-vram" value="" checked> Default</label>
-                            <label class="flag-option"><input type="radio" name="pe-vram" value="--gpu-only"> --gpu-only</label>
-                            <label class="flag-option"><input type="radio" name="pe-vram" value="--highvram"> --highvram</label>
-                            <label class="flag-option"><input type="radio" name="pe-vram" value="--normalvram"> --normalvram</label>
-                            <label class="flag-option"><input type="radio" name="pe-vram" value="--lowvram"> --lowvram</label>
-                            <label class="flag-option"><input type="radio" name="pe-vram" value="--novram"> --novram</label>
-                            <label class="flag-option"><input type="radio" name="pe-vram" value="--cpu"> --cpu</label>
+                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
+                            <div class="text-sm font-medium text-white mb-3">VRAM Management</div>
+                            <div class="space-y-2 text-xs">
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="" checked class="accent-indigo-500"> Default</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--gpu-only" class="accent-indigo-500"> --gpu-only</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--highvram" class="accent-indigo-500"> --highvram</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--normalvram" class="accent-indigo-500"> --normalvram</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--lowvram" class="accent-indigo-500"> --lowvram</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--novram" class="accent-indigo-500"> --novram</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--cpu" class="accent-indigo-500"> --cpu</label>
+                            </div>
                         </div>
 
                         <!-- Attention -->
-                        <div class="flag-group">
-                            <div class="flag-group-title">Attention</div>
-                            <label class="flag-option"><input type="radio" name="pe-attention" value="" checked> Default</label>
-                            <label class="flag-option"><input type="radio" name="pe-attention" value="--use-pytorch-cross-attention"> pytorch-cross</label>
-                            <label class="flag-option"><input type="radio" name="pe-attention" value="--use-sage-attention"> sage-attention</label>
-                            <label class="flag-option"><input type="radio" name="pe-attention" value="--use-flash-attention"> flash-attention</label>
-                            <label class="flag-option"><input type="radio" name="pe-attention" value="--use-split-cross-attention"> split-cross</label>
-                            <label class="flag-option"><input type="radio" name="pe-attention" value="--use-quad-cross-attention"> quad-cross</label>
+                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
+                            <div class="text-sm font-medium text-white mb-3">Attention</div>
+                            <div class="space-y-2 text-xs">
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="" checked class="accent-indigo-500"> Default</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-pytorch-cross-attention" class="accent-indigo-500"> pytorch-cross</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-sage-attention" class="accent-indigo-500"> sage-attention</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-flash-attention" class="accent-indigo-500"> flash-attention</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-split-cross-attention" class="accent-indigo-500"> split-cross</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-quad-cross-attention" class="accent-indigo-500"> quad-cross</label>
+                            </div>
                         </div>
 
                         <!-- Precision -->
-                        <div class="flag-group">
-                            <div class="flag-group-title">Precision</div>
-                            <label class="flag-option"><input type="radio" name="pe-precision" value="" checked> Default</label>
-                            <label class="flag-option"><input type="radio" name="pe-precision" value="--force-fp16"> --force-fp16</label>
-                            <label class="flag-option"><input type="radio" name="pe-precision" value="--force-fp32"> --force-fp32</label>
-                            <label class="flag-option"><input type="radio" name="pe-precision" value="--bf16-unet"> --bf16-unet</label>
-                            <label class="flag-option"><input type="radio" name="pe-precision" value="--fp8_e4m3fn-unet"> --fp8-unet</label>
+                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
+                            <div class="text-sm font-medium text-white mb-3">Precision</div>
+                            <div class="space-y-2 text-xs">
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="" checked class="accent-indigo-500"> Default</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="--force-fp16" class="accent-indigo-500"> --force-fp16</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="--force-fp32" class="accent-indigo-500"> --force-fp32</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="--bf16-unet" class="accent-indigo-500"> --bf16-unet</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="--fp8_e4m3fn-unet" class="accent-indigo-500"> --fp8-unet</label>
+                            </div>
                         </div>
 
                         <!-- VAE -->
-                        <div class="flag-group">
-                            <div class="flag-group-title">VAE</div>
-                            <label class="flag-option"><input type="radio" name="pe-vae" value="" checked> Default</label>
-                            <label class="flag-option"><input type="radio" name="pe-vae" value="--fp16-vae"> --fp16-vae</label>
-                            <label class="flag-option"><input type="radio" name="pe-vae" value="--fp32-vae"> --fp32-vae</label>
-                            <label class="flag-option"><input type="radio" name="pe-vae" value="--bf16-vae"> --bf16-vae</label>
-                            <label class="flag-option"><input type="checkbox" name="pe-cpu-vae" value="--cpu-vae"> --cpu-vae</label>
+                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
+                            <div class="text-sm font-medium text-white mb-3">VAE</div>
+                            <div class="space-y-2 text-xs">
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vae" value="" checked class="accent-indigo-500"> Default</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vae" value="--fp16-vae" class="accent-indigo-500"> --fp16-vae</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vae" value="--fp32-vae" class="accent-indigo-500"> --fp32-vae</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vae" value="--bf16-vae" class="accent-indigo-500"> --bf16-vae</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-cpu-vae" value="--cpu-vae" class="accent-indigo-500"> --cpu-vae</label>
+                            </div>
                         </div>
 
                         <!-- Cache -->
-                        <div class="flag-group">
-                            <div class="flag-group-title">Cache</div>
-                            <label class="flag-option"><input type="radio" name="pe-cache" value="" checked> Default</label>
-                            <label class="flag-option"><input type="radio" name="pe-cache" value="--cache-classic"> --cache-classic</label>
-                            <label class="flag-option"><input type="radio" name="pe-cache" value="--cache-lru 10"> --cache-lru</label>
-                            <label class="flag-option"><input type="radio" name="pe-cache" value="--cache-none"> --cache-none</label>
+                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
+                            <div class="text-sm font-medium text-white mb-3">Cache</div>
+                            <div class="space-y-2 text-xs">
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-cache" value="" checked class="accent-indigo-500"> Default</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-cache" value="--cache-classic" class="accent-indigo-500"> --cache-classic</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-cache" value="--cache-lru 10" class="accent-indigo-500"> --cache-lru</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-cache" value="--cache-none" class="accent-indigo-500"> --cache-none</label>
+                            </div>
                         </div>
 
                         <!-- Other -->
-                        <div class="flag-group">
-                            <div class="flag-group-title">Other</div>
-                            <label class="flag-option"><input type="checkbox" name="pe-disable-xformers" value="--disable-xformers"> disable-xformers</label>
-                            <label class="flag-option"><input type="checkbox" name="pe-force-upcast" value="--force-upcast-attention"> force-upcast</label>
-                            <label class="flag-option"><input type="checkbox" name="pe-disable-smart-memory" value="--disable-smart-memory"> disable-smart-mem</label>
-                            <label class="flag-option"><input type="checkbox" name="pe-deterministic" value="--deterministic"> deterministic</label>
-                            <label class="flag-option"><input type="checkbox" name="pe-fast" value="--fast"> --fast</label>
-                            <label class="flag-option"><input type="checkbox" name="pe-preview-method" value="--preview-method taesd"> preview-taesd</label>
+                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
+                            <div class="text-sm font-medium text-white mb-3">Other</div>
+                            <div class="space-y-2 text-xs">
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-disable-xformers" value="--disable-xformers" class="accent-indigo-500"> disable-xformers</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-force-upcast" value="--force-upcast-attention" class="accent-indigo-500"> force-upcast</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-disable-smart-memory" value="--disable-smart-memory" class="accent-indigo-500"> disable-smart-mem</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-deterministic" value="--deterministic" class="accent-indigo-500"> deterministic</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-fast" value="--fast" class="accent-indigo-500"> --fast</label>
+                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-preview-method" value="--preview-method taesd" class="accent-indigo-500"> preview-taesd</label>
+                            </div>
                         </div>
 
                         <!-- Custom Flags -->
-                        <div class="flag-group flag-group-custom">
-                            <div class="flag-group-title">Custom Flags</div>
-                            <div class="custom-flags-list" id="pe-custom-flags-list"></div>
-                            <div class="custom-flag-add">
-                                <input type="text" id="pe-custom-flag-input" class="custom-flag-input" placeholder="e.g. --reserve-vram 2">
-                                <button class="btn btn-xs btn-primary" id="pe-add-custom-flag" title="Add">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                        <polyline points="20 6 9 17 4 12"/>
-                                    </svg>
+                        <div class="flag-group flag-group-custom bg-card/50 rounded-lg p-4 border border-border-subtle col-span-2 lg:col-span-3">
+                            <div class="text-sm font-medium text-white mb-3">Custom Flags</div>
+                            <div class="custom-flags-list flex flex-wrap gap-2 mb-3" id="pe-custom-flags-list"></div>
+                            <div class="flex items-center gap-2">
+                                <input type="text" id="pe-custom-flag-input" class="input-glass flex-1 text-xs" placeholder="e.g. --reserve-vram 2">
+                                <button class="btn-primary-glass btn-sm" id="pe-add-custom-flag" title="Add">
+                                    <i class="fa-solid fa-plus"></i>
                                 </button>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="profile-editor-footer">
-                <button class="btn btn-danger" id="profile-delete-btn" style="display:none;" onclick="app.deleteCurrentProfile()">Delete Profile</button>
-                <button class="btn btn-primary" onclick="app.saveProfile()">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                        <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
-                        <polyline points="17 21 17 13 7 13 7 21"/>
-                        <polyline points="7 3 7 8 15 8"/>
-                    </svg>
-                    Save Profile
+            <div class="profile-editor-footer flex items-center justify-between p-4 border-t border-border-subtle bg-sidebar">
+                <button class="btn-glass btn-danger hidden" id="profile-delete-btn" onclick="app.deleteCurrentProfile()">
+                    <i class="fa-solid fa-trash"></i>
+                    Delete Profile
                 </button>
+                <div class="ml-auto">
+                    <button class="btn-primary-glass" onclick="app.saveProfile()">
+                        <i class="fa-solid fa-floppy-disk"></i>
+                        Save Profile
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- Install Modal -->
-    <div class="modal-overlay" id="install-modal" style="display: none;">
-        <div class="modal">
-            <div class="modal-header">
-                <h2>Install Custom Node</h2>
-                <button class="btn btn-icon modal-close" id="modal-close">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+    <div class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm" id="install-modal">
+        <div class="modal-content glass-panel w-full max-w-md p-6 rounded-xl">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-lg font-semibold text-white">Install Custom Node</h2>
+                <button class="btn-icon-glass modal-close" id="modal-close">
+                    <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label for="git-url">Git Repository URL</label>
-                    <input type="text" id="git-url" class="form-input" placeholder="https://github.com/username/repo">
+            <div class="space-y-4">
+                <div>
+                    <label for="git-url" class="block text-sm text-slate-400 mb-2">Git Repository URL</label>
+                    <input type="text" id="git-url" class="input-glass w-full" placeholder="https://github.com/username/repo">
                 </div>
-                <div class="form-group">
-                    <label for="folder-name">Folder Name (optional)</label>
-                    <input type="text" id="folder-name" class="form-input" placeholder="Auto-detect from URL">
+                <div>
+                    <label for="folder-name" class="block text-sm text-slate-400 mb-2">Folder Name (optional)</label>
+                    <input type="text" id="folder-name" class="input-glass w-full" placeholder="Auto-detect from URL">
                 </div>
-                <div class="form-checkbox">
-                    <input type="checkbox" id="install-deps" checked>
-                    <label for="install-deps">Install requirements.txt after cloning</label>
-                </div>
+                <label class="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+                    <input type="checkbox" id="install-deps" checked class="accent-indigo-500">
+                    Install requirements.txt after cloning
+                </label>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
-                <button class="btn btn-primary" id="modal-install">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                        <polyline points="7 10 12 15 17 10"/>
-                        <line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
+            <div class="flex items-center justify-end gap-3 mt-6">
+                <button class="btn-glass" id="modal-cancel">Cancel</button>
+                <button class="btn-primary-glass" id="modal-install">
+                    <i class="fa-solid fa-download"></i>
                     Clone Repository
                 </button>
             </div>
@@ -828,74 +750,51 @@
     </div>
 
     <!-- Browse Nodes Modal -->
-    <div class="modal-overlay" id="browse-modal" style="display: none;">
-        <div class="modal modal-browse">
-            <div class="modal-header">
-                <h2>Browse Available Nodes</h2>
-                <span class="browse-count" id="browse-count">0 nodes</span>
-                <button class="btn btn-icon modal-close" onclick="app.closeBrowseModal()">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+    <div class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm" id="browse-modal">
+        <div class="modal-content glass-panel w-full max-w-5xl max-h-[90vh] rounded-xl flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between p-4 border-b border-border-subtle">
+                <div class="flex items-center gap-3">
+                    <h2 class="text-lg font-semibold text-white">Browse Available Nodes</h2>
+                    <span class="text-xs text-slate-500" id="browse-count">0 nodes</span>
+                </div>
+                <button class="btn-icon-glass" onclick="app.closeBrowseModal()">
+                    <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="browse-toolbar">
-                <div class="browse-search-wrap">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="11" cy="11" r="8"/>
-                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                    </svg>
-                    <input type="text" id="browse-search" class="form-input" placeholder="Search nodes...">
+            <div class="browse-toolbar p-4 border-b border-border-subtle flex flex-wrap items-center gap-3">
+                <div class="relative flex-1 min-w-[200px] max-w-sm">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
+                    <input type="text" id="browse-search" class="input-glass w-full pl-10" placeholder="Search nodes...">
                 </div>
-                <label class="browse-filter-toggle" title="Hide already installed nodes">
-                    <input type="checkbox" id="browse-hide-installed">
-                    <span>Hide installed</span>
+                <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                    <input type="checkbox" id="browse-hide-installed" class="accent-indigo-500">
+                    Hide installed
                 </label>
-                <div class="browse-sort-group">
-                    <select id="browse-sort" class="filter-select">
-                        <option value="stars">Stars</option>
-                        <option value="name">Name</option>
-                        <option value="author">Author</option>
-                    </select>
-                    <button class="btn btn-icon browse-sort-dir" id="browse-sort-dir" title="Toggle sort direction">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 5v14M5 12l7-7 7 7"/>
-                        </svg>
+                <select id="browse-sort" class="select-glass">
+                    <option value="stars">Stars</option>
+                    <option value="name">Name</option>
+                    <option value="author">Author</option>
+                </select>
+                <button class="btn-icon-glass" id="browse-sort-dir" title="Toggle sort direction">
+                    <i class="fa-solid fa-arrow-up-short-wide"></i>
+                </button>
+                <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
+                    <button class="btn-icon-glass active rounded-none border-0" id="browse-view-grid" title="Grid view">
+                        <i class="fa-solid fa-grid-2"></i>
+                    </button>
+                    <button class="btn-icon-glass rounded-none border-0" id="browse-view-list" title="List view">
+                        <i class="fa-solid fa-list"></i>
                     </button>
                 </div>
-                <div class="browse-view-toggle">
-                    <button class="btn btn-icon active" id="browse-view-grid" title="Grid view">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="3" y="3" width="7" height="7"/>
-                            <rect x="14" y="3" width="7" height="7"/>
-                            <rect x="14" y="14" width="7" height="7"/>
-                            <rect x="3" y="14" width="7" height="7"/>
-                        </svg>
-                    </button>
-                    <button class="btn btn-icon" id="browse-view-list" title="List view">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="8" y1="6" x2="21" y2="6"/>
-                            <line x1="8" y1="12" x2="21" y2="12"/>
-                            <line x1="8" y1="18" x2="21" y2="18"/>
-                            <line x1="3" y1="6" x2="3.01" y2="6"/>
-                            <line x1="3" y1="12" x2="3.01" y2="12"/>
-                            <line x1="3" y1="18" x2="3.01" y2="18"/>
-                        </svg>
-                    </button>
-                </div>
-                <button class="btn btn-secondary btn-icon" id="browse-refresh" title="Refresh list">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M23 4v6h-6"/>
-                        <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
-                    </svg>
+                <button class="btn-icon-glass" id="browse-refresh" title="Refresh list">
+                    <i class="fa-solid fa-rotate"></i>
                 </button>
             </div>
-            <div class="modal-body">
-                <div class="browse-nodes-container" id="browse-nodes-list">
-                    <div class="loading-state">
-                        <div class="loading-spinner"></div>
-                        <p>Loading available nodes...</p>
+            <div class="flex-1 overflow-y-auto p-4">
+                <div class="browse-nodes-container grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="browse-nodes-list">
+                    <div class="loading-state col-span-full flex flex-col items-center justify-center py-20">
+                        <div class="loader mb-4"></div>
+                        <p class="text-slate-400">Loading available nodes...</p>
                     </div>
                 </div>
             </div>
@@ -903,221 +802,177 @@
     </div>
 
     <!-- Bulk Actions Bar -->
-    <div class="bulk-actions-bar" id="bulk-actions-bar" style="display: none;">
-        <span class="selection-count">0 selected</span>
-        <button class="btn btn-secondary" onclick="app.selectAllNodes()">Select All</button>
-        <button class="btn btn-primary" onclick="app.bulkUpdateSelected()">Update Selected</button>
-        <button class="btn btn-warning" onclick="app.bulkDeactivateSelected()">Deactivate</button>
-        <button class="btn btn-danger" onclick="app.bulkRemoveSelected()">Remove</button>
-        <button class="btn btn-secondary" onclick="app.selectedNodes.clear(); app.updateSelectionUI();">Clear</button>
+    <div class="bulk-actions-bar fixed bottom-6 left-1/2 -translate-x-1/2 z-40 hidden items-center gap-3 px-6 py-3 rounded-xl glass-panel shadow-2xl" id="bulk-actions-bar">
+        <span class="selection-count text-sm text-white font-medium">0 selected</span>
+        <button class="btn-glass btn-sm" onclick="app.selectAllNodes()">Select All</button>
+        <button class="btn-primary-glass btn-sm" onclick="app.bulkUpdateSelected()">Update</button>
+        <button class="btn-glass btn-warning btn-sm" onclick="app.bulkDeactivateSelected()">Deactivate</button>
+        <button class="btn-glass btn-danger btn-sm" onclick="app.bulkRemoveSelected()">Remove</button>
+        <button class="btn-glass btn-sm" onclick="app.selectedNodes.clear(); app.updateSelectionUI();">Clear</button>
     </div>
 
     <!-- Profile Context Menu -->
-    <div class="context-menu" id="profile-context-menu" style="display: none;">
-        <button class="context-menu-item" data-action="launch">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
+    <div class="context-menu fixed z-50 hidden glass-panel rounded-lg py-1 min-w-[180px] shadow-xl" id="profile-context-menu">
+        <button class="context-menu-item flex items-center gap-3 w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-white/10 transition-colors" data-action="launch">
+            <i class="fa-solid fa-play w-4 text-center"></i>
             Launch
         </button>
-        <button class="context-menu-item" data-action="edit">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-            </svg>
+        <button class="context-menu-item flex items-center gap-3 w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-white/10 transition-colors" data-action="edit">
+            <i class="fa-solid fa-pen w-4 text-center"></i>
             Edit
         </button>
-        <button class="context-menu-item" data-action="duplicate">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-            </svg>
+        <button class="context-menu-item flex items-center gap-3 w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-white/10 transition-colors" data-action="duplicate">
+            <i class="fa-regular fa-copy w-4 text-center"></i>
             Duplicate
         </button>
-        <div class="context-menu-divider"></div>
-        <button class="context-menu-item" data-action="set-default">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
+        <div class="border-t border-border-subtle my-1"></div>
+        <button class="context-menu-item flex items-center gap-3 w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-white/10 transition-colors" data-action="set-default">
+            <i class="fa-solid fa-star w-4 text-center"></i>
             Set as Default
         </button>
-        <button class="context-menu-item" data-action="export">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
+        <button class="context-menu-item flex items-center gap-3 w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-white/10 transition-colors" data-action="export">
+            <i class="fa-solid fa-arrow-up-from-bracket w-4 text-center"></i>
             Export
         </button>
-        <button class="context-menu-item" data-action="quick-launch">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-            </svg>
+        <button class="context-menu-item flex items-center gap-3 w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-white/10 transition-colors" data-action="quick-launch">
+            <i class="fa-solid fa-link w-4 text-center"></i>
             Create Quick Launch
         </button>
-        <div class="context-menu-divider"></div>
-        <button class="context-menu-item context-menu-item-danger" data-action="delete">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-            </svg>
+        <div class="border-t border-border-subtle my-1"></div>
+        <button class="context-menu-item context-menu-item-danger flex items-center gap-3 w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-red-500/20 transition-colors" data-action="delete">
+            <i class="fa-solid fa-trash w-4 text-center"></i>
             Delete
         </button>
     </div>
 
-    <!-- Toast Notifications -->
-    <div class="toast-container" id="toast-container"></div>
-
     <!-- Settings Modal -->
-    <div class="modal-overlay" id="settings-modal" style="display: none;">
-        <div class="modal modal-settings">
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal-content">
             <div class="modal-header">
-                <h2>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
-                    </svg>
-                    Settings
-                </h2>
-                <button class="btn btn-icon modal-close" onclick="app.closeSettingsModal()">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+                <div class="modal-title">
+                    <i class="fa-solid fa-gear"></i>
+                    <span>Settings</span>
+                </div>
+                <button class="modal-close" onclick="app.closeSettingsModal()">
+                    <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
             <div class="modal-body settings-body">
                 <!-- Theme Section -->
                 <div class="settings-section">
-                    <h3>Appearance</h3>
+                    <h3 class="text-sm font-semibold text-white mb-4">Appearance</h3>
                     
-                    <div class="settings-group">
-                        <label>Theme</label>
-                        <div class="theme-selector" id="theme-selector">
-                            <button class="theme-option" data-theme="dark" title="Dark">
-                                <div class="theme-preview dark-preview">
-                                    <div class="preview-header"></div>
-                                    <div class="preview-content"></div>
-                                </div>
-                                <span>Dark</span>
-                            </button>
-                            <button class="theme-option" data-theme="light" title="Light">
-                                <div class="theme-preview light-preview">
-                                    <div class="preview-header"></div>
-                                    <div class="preview-content"></div>
-                                </div>
-                                <span>Light</span>
-                            </button>
-                            <button class="theme-option" data-theme="midnight" title="Midnight">
-                                <div class="theme-preview midnight-preview">
-                                    <div class="preview-header"></div>
-                                    <div class="preview-content"></div>
-                                </div>
-                                <span>Midnight</span>
-                            </button>
-                            <button class="theme-option" data-theme="forest" title="Forest">
-                                <div class="theme-preview forest-preview">
-                                    <div class="preview-header"></div>
-                                    <div class="preview-content"></div>
-                                </div>
-                                <span>Forest</span>
-                            </button>
-                            <button class="theme-option" data-theme="ocean" title="Ocean">
-                                <div class="theme-preview ocean-preview">
-                                    <div class="preview-header"></div>
-                                    <div class="preview-content"></div>
-                                </div>
-                                <span>Ocean</span>
-                            </button>
-                            <button class="theme-option" data-theme="sunset" title="Sunset">
-                                <div class="theme-preview sunset-preview">
-                                    <div class="preview-header"></div>
-                                    <div class="preview-content"></div>
-                                </div>
-                                <span>Sunset</span>
-                            </button>
-                            <button class="theme-option" data-theme="blackout" title="Blackout">
-                                <div class="theme-preview blackout-preview">
-                                    <div class="preview-header"></div>
-                                    <div class="preview-content"></div>
-                                </div>
-                                <span>Blackout</span>
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label>Accent Color</label>
-                        <div class="accent-selector" id="accent-selector">
-                            <button class="accent-option" data-accent="blue" style="--preview-color: #4a9eff;" title="Blue"></button>
-                            <button class="accent-option" data-accent="purple" style="--preview-color: #a855f7;" title="Purple"></button>
-                            <button class="accent-option" data-accent="pink" style="--preview-color: #ec4899;" title="Pink"></button>
-                            <button class="accent-option" data-accent="red" style="--preview-color: #ef4444;" title="Red"></button>
-                            <button class="accent-option" data-accent="orange" style="--preview-color: #f97316;" title="Orange"></button>
-                            <button class="accent-option" data-accent="yellow" style="--preview-color: #eab308;" title="Yellow"></button>
-                            <button class="accent-option" data-accent="green" style="--preview-color: #22c55e;" title="Green"></button>
-                            <button class="accent-option" data-accent="teal" style="--preview-color: #14b8a6;" title="Teal"></button>
-                            <button class="accent-option" data-accent="cyan" style="--preview-color: #06b6d4;" title="Cyan"></button>
-                            <div class="accent-custom-wrapper" onclick="app.openColorPicker('accent')">
-                                <button class="color-swatch-btn accent-custom-btn" id="accent-custom-picker" title="Custom Color"></button>
-                                <svg class="accent-custom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M2 22l1-1h3l9-9"/>
-                                    <path d="M3 21v-3l9-9"/>
-                                    <path d="M15 6l3-3 3 3-3 3"/>
-                                    <path d="M12 9l6-6"/>
-                                </svg>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="text-sm text-slate-400 mb-2 block">Theme</label>
+                            <div class="theme-selector flex flex-wrap gap-2" id="theme-selector">
+                                <button class="theme-option p-2 rounded-lg border border-border-subtle hover:border-indigo-500 transition-colors" data-theme="dark" title="Dark">
+                                    <div class="theme-preview w-12 h-8 rounded bg-[#1a1a1a] border border-border-subtle overflow-hidden">
+                                        <div class="h-2 bg-[#2d2d2d]"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-400 mt-1 block">Dark</span>
+                                </button>
+                                <button class="theme-option p-2 rounded-lg border border-border-subtle hover:border-indigo-500 transition-colors" data-theme="light" title="Light">
+                                    <div class="theme-preview w-12 h-8 rounded bg-[#f5f5f5] border border-slate-300 overflow-hidden">
+                                        <div class="h-2 bg-white"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-400 mt-1 block">Light</span>
+                                </button>
+                                <button class="theme-option p-2 rounded-lg border border-border-subtle hover:border-indigo-500 transition-colors" data-theme="midnight" title="Midnight">
+                                    <div class="theme-preview w-12 h-8 rounded bg-[#0d1117] border border-border-subtle overflow-hidden">
+                                        <div class="h-2 bg-[#161b22]"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-400 mt-1 block">Midnight</span>
+                                </button>
+                                <button class="theme-option p-2 rounded-lg border border-border-subtle hover:border-indigo-500 transition-colors" data-theme="forest" title="Forest">
+                                    <div class="theme-preview w-12 h-8 rounded bg-[#1a2318] border border-border-subtle overflow-hidden">
+                                        <div class="h-2 bg-[#232d20]"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-400 mt-1 block">Forest</span>
+                                </button>
+                                <button class="theme-option p-2 rounded-lg border border-border-subtle hover:border-indigo-500 transition-colors" data-theme="ocean" title="Ocean">
+                                    <div class="theme-preview w-12 h-8 rounded bg-[#0f172a] border border-border-subtle overflow-hidden">
+                                        <div class="h-2 bg-[#1e293b]"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-400 mt-1 block">Ocean</span>
+                                </button>
+                                <button class="theme-option p-2 rounded-lg border border-border-subtle hover:border-indigo-500 transition-colors" data-theme="sunset" title="Sunset">
+                                    <div class="theme-preview w-12 h-8 rounded bg-[#1f1315] border border-border-subtle overflow-hidden">
+                                        <div class="h-2 bg-[#2d1f21]"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-400 mt-1 block">Sunset</span>
+                                </button>
+                                <button class="theme-option p-2 rounded-lg border border-border-subtle hover:border-indigo-500 transition-colors" data-theme="blackout" title="Blackout">
+                                    <div class="theme-preview w-12 h-8 rounded bg-[#000000] border border-border-subtle overflow-hidden">
+                                        <div class="h-2 bg-[#0a0a0a]"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-400 mt-1 block">Blackout</span>
+                                </button>
                             </div>
                         </div>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label>Button Colors</label>
-                        <div class="button-color-selector">
-                            <div class="button-color-item">
-                                <button class="color-swatch-btn" id="btn-color-success" onclick="app.openColorPicker('success')" title="Success Button Color"></button>
-                                <span>Success</span>
+                        
+                        <div>
+                            <label class="text-sm text-slate-400 mb-2 block">Accent Color</label>
+                            <div class="accent-selector flex flex-wrap gap-2" id="accent-selector">
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#8a9a5b] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="moss" title="Moss"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#655229] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="copper" title="Copper"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#6366f1] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="indigo" title="Indigo"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#4a9eff] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="blue" title="Blue"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#a855f7] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="purple" title="Purple"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#ec4899] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="pink" title="Pink"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#ef4444] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="red" title="Red"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#f97316] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="orange" title="Orange"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#eab308] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="yellow" title="Yellow"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#22c55e] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="green" title="Green"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#14b8a6] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="teal" title="Teal"></button>
+                                <button class="accent-option w-8 h-8 rounded-lg bg-[#06b6d4] border-2 border-transparent hover:border-white/50 transition-colors" data-accent="cyan" title="Cyan"></button>
+                                <button class="accent-option accent-custom-btn w-8 h-8 rounded-lg bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-500 border-2 border-transparent hover:border-white/50 transition-colors flex items-center justify-center" id="accent-custom-picker" onclick="app.openColorPicker('accent')" title="Custom">
+                                    <i class="fa-solid fa-palette text-white text-xs"></i>
+                                </button>
                             </div>
-                            <div class="button-color-item">
-                                <button class="color-swatch-btn" id="btn-color-warning" onclick="app.openColorPicker('warning')" title="Warning Button Color"></button>
-                                <span>Warning</span>
-                            </div>
-                            <div class="button-color-item">
-                                <button class="color-swatch-btn" id="btn-color-danger" onclick="app.openColorPicker('danger')" title="Danger Button Color"></button>
-                                <span>Danger</span>
-                            </div>
-                            <button class="btn btn-sm btn-secondary" onclick="app.resetButtonColors()" title="Reset to defaults">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
-                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-                                    <path d="M3 3v5h5"/>
-                                </svg>
-                            </button>
                         </div>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label class="settings-toggle">
-                            <input type="checkbox" id="setting-animations">
-                            <span class="toggle-slider"></span>
-                            Enable animations
+                        
+                        <div>
+                            <label class="text-sm text-slate-400 mb-2 block">Button Colors</label>
+                            <div class="flex flex-wrap gap-4">
+                                <div class="flex items-center gap-2">
+                                    <button class="w-8 h-8 rounded-lg bg-green-500" id="btn-color-success" onclick="app.openColorPicker('success')"></button>
+                                    <span class="text-xs text-slate-500">Success</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button class="w-8 h-8 rounded-lg bg-amber-500" id="btn-color-warning" onclick="app.openColorPicker('warning')"></button>
+                                    <span class="text-xs text-slate-500">Warning</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button class="w-8 h-8 rounded-lg bg-red-500" id="btn-color-danger" onclick="app.openColorPicker('danger')"></button>
+                                    <span class="text-xs text-slate-500">Danger</span>
+                                </div>
+                                <button class="btn-glass btn-sm" onclick="app.resetButtonColors()">
+                                    <i class="fa-solid fa-rotate-left"></i>
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="setting-animations" class="accent-indigo-500">
+                            <span class="text-sm text-slate-300">Enable animations</span>
                         </label>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label class="settings-toggle">
-                            <input type="checkbox" id="setting-system-theme">
-                            <span class="toggle-slider"></span>
-                            Sync with system theme
+                        
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="setting-system-theme" class="accent-indigo-500">
+                            <span class="text-sm text-slate-300">Sync with system theme</span>
                         </label>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label>UI Scale</label>
-                        <div class="ui-scale-slider">
-                            <input type="range" id="setting-ui-scale" min="0" max="2" step="1" value="1">
-                            <div class="ui-scale-labels">
-                                <span data-value="0">Compact</span>
-                                <span data-value="1">Normal</span>
-                                <span data-value="2">Old Person</span>
+                        
+                        <div>
+                            <label class="text-sm text-slate-400 mb-2 block">UI Scale</label>
+                            <div class="flex items-center gap-4">
+                                <input type="range" id="setting-ui-scale" min="0" max="2" step="1" value="1" class="flex-1 accent-indigo-500">
+                                <div class="flex gap-4 text-xs text-slate-500">
+                                    <span>Compact</span>
+                                    <span>Normal</span>
+                                    <span>Large</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1125,149 +980,97 @@
                 
                 <!-- Behavior Section -->
                 <div class="settings-section">
-                    <h3>Behavior</h3>
-                    
-                    <div class="settings-group">
-                        <label class="settings-toggle">
-                            <input type="checkbox" id="setting-auto-refresh">
-                            <span class="toggle-slider"></span>
-                            Auto-refresh nodes on startup
+                    <h3 class="text-sm font-semibold text-white mb-4">Behavior</h3>
+                    <div class="space-y-3">
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="setting-auto-refresh" class="accent-indigo-500">
+                            <span class="text-sm text-slate-300">Auto-refresh nodes on startup</span>
                         </label>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label class="settings-toggle">
-                            <input type="checkbox" id="setting-show-disabled">
-                            <span class="toggle-slider"></span>
-                            Show disabled nodes
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="setting-show-disabled" class="accent-indigo-500">
+                            <span class="text-sm text-slate-300">Show disabled nodes</span>
                         </label>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label class="settings-toggle">
-                            <input type="checkbox" id="setting-console-autoscroll">
-                            <span class="toggle-slider"></span>
-                            Console auto-scroll
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="setting-console-autoscroll" class="accent-indigo-500">
+                            <span class="text-sm text-slate-300">Console auto-scroll</span>
                         </label>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label class="settings-toggle">
-                            <input type="checkbox" id="setting-confirm-remove">
-                            <span class="toggle-slider"></span>
-                            Confirm before removing nodes
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="setting-confirm-remove" class="accent-indigo-500">
+                            <span class="text-sm text-slate-300">Confirm before removing nodes</span>
                         </label>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label>Default sort</label>
-                        <select id="setting-default-sort" class="form-select">
-                            <option value="name">Name</option>
-                            <option value="date_added">Date Added</option>
-                            <option value="last_updated">Last Updated</option>
-                            <option value="author">Author</option>
-                            <option value="stars">GitHub Stars</option>
-                        </select>
+                        <div class="flex items-center gap-3">
+                            <label class="text-sm text-slate-400">Default sort</label>
+                            <select id="setting-default-sort" class="select-glass">
+                                <option value="name">Name</option>
+                                <option value="date_added">Date Added</option>
+                                <option value="last_updated">Last Updated</option>
+                                <option value="author">Author</option>
+                                <option value="stars">GitHub Stars</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
                 
                 <!-- Console Section -->
                 <div class="settings-section">
-                    <h3>Console</h3>
-                    
-                    <div class="settings-group">
-                        <label>Console buffer size</label>
-                        <select id="setting-console-buffer" class="form-select">
-                            <option value="500">500 lines</option>
-                            <option value="1000">1000 lines</option>
-                            <option value="2500">2500 lines</option>
-                            <option value="5000">5000 lines</option>
-                            <option value="10000">10000 lines</option>
-                        </select>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label class="settings-toggle">
-                            <input type="checkbox" id="setting-console-timestamps">
-                            <span class="toggle-slider"></span>
-                            Show timestamps in console
+                    <h3 class="text-sm font-semibold text-white mb-4">Console</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center gap-3">
+                            <label class="text-sm text-slate-400">Buffer size</label>
+                            <select id="setting-console-buffer" class="select-glass">
+                                <option value="500">500 lines</option>
+                                <option value="1000">1000 lines</option>
+                                <option value="2500">2500 lines</option>
+                                <option value="5000">5000 lines</option>
+                                <option value="10000">10000 lines</option>
+                            </select>
+                        </div>
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="setting-console-timestamps" class="accent-indigo-500">
+                            <span class="text-sm text-slate-300">Show timestamps in console</span>
                         </label>
                     </div>
                 </div>
                 
                 <!-- Profiles Section -->
                 <div class="settings-section">
-                    <h3>Profiles</h3>
-                    
-                    <div class="settings-group">
-                        <p class="settings-description">Add preset profiles for different hardware configurations (GPU Standard, Low VRAM, CPU, etc.)</p>
-                        <button class="btn btn-secondary" onclick="app.loadPresetProfiles()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <rect x="3" y="3" width="7" height="7"/>
-                                <rect x="14" y="3" width="7" height="7"/>
-                                <rect x="14" y="14" width="7" height="7"/>
-                                <rect x="3" y="14" width="7" height="7"/>
-                            </svg>
-                            Load Preset Profiles
-                        </button>
-                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-4">Profiles</h3>
+                    <p class="text-xs text-slate-500 mb-3">Add preset profiles for different hardware configurations</p>
+                    <button class="btn-glass" onclick="app.loadPresetProfiles()">
+                        <i class="fa-solid fa-layer-group"></i>
+                        Load Preset Profiles
+                    </button>
                 </div>
                 
                 <!-- Shortcuts Section -->
                 <div class="settings-section">
-                    <h3>Shortcuts</h3>
-                    
-                    <div class="settings-group">
-                        <p class="settings-description">Create a shortcut to launch MF Conductor standalone server.</p>
-                        <button class="btn btn-secondary" onclick="app.createConductorShortcut()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                            </svg>
-                            Create Shortcut
-                        </button>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <p class="settings-description">Tip: Right-click any profile to create a quick launch shortcut that starts ComfyUI with that profile's exact settings.</p>
-                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-4">Shortcuts</h3>
+                    <p class="text-xs text-slate-500 mb-3">Create a shortcut to launch MF Conductor standalone server</p>
+                    <button class="btn-glass" onclick="app.createConductorShortcut()">
+                        <i class="fa-solid fa-link"></i>
+                        Create Shortcut
+                    </button>
+                    <p class="text-xs text-slate-600 mt-2">Tip: Right-click any profile to create a quick launch shortcut</p>
                 </div>
                 
                 <!-- Data Section -->
                 <div class="settings-section">
-                    <h3>Data</h3>
-                    
-                    <div class="settings-group settings-buttons">
-                        <button class="btn btn-secondary" onclick="app.exportSettings()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                <polyline points="17 8 12 3 7 8"/>
-                                <line x1="12" y1="3" x2="12" y2="15"/>
-                            </svg>
-                            Export Settings
+                    <h3 class="text-sm font-semibold text-white mb-4">Data</h3>
+                    <div class="flex flex-wrap gap-2">
+                        <button class="btn-glass" onclick="app.exportSettings()">
+                            <i class="fa-solid fa-arrow-up-from-bracket"></i>
+                            Export
                         </button>
-                        <button class="btn btn-secondary" onclick="app.importSettings()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                <polyline points="7 10 12 15 17 10"/>
-                                <line x1="12" y1="15" x2="12" y2="3"/>
-                            </svg>
-                            Import Settings
+                        <button class="btn-glass" onclick="app.importSettings()">
+                            <i class="fa-solid fa-download"></i>
+                            Import
                         </button>
-                        <button class="btn btn-danger" onclick="app.resetSettings()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <path d="M3 6h18"/>
-                                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/>
-                                <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                            </svg>
-                            Reset to Defaults
+                        <button class="btn-glass btn-danger" onclick="app.resetSettings()">
+                            <i class="fa-solid fa-trash"></i>
+                            Reset
                         </button>
-                        <button class="btn btn-warning" onclick="app.restartConductor()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <path d="M23 4v6h-6"/>
-                                <path d="M1 20v-6h6"/>
-                                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                            </svg>
+                        <button class="btn-glass btn-warning" onclick="app.restartConductor()">
+                            <i class="fa-solid fa-rotate"></i>
                             Restart Conductor
                         </button>
                     </div>
@@ -1277,77 +1080,88 @@
     </div>
 
     <!-- Color Picker Modal -->
-    <div class="color-picker-overlay" id="color-picker-modal" style="display: none;">
-        <div class="color-picker-container">
-            <div class="color-picker-header">
-                <span>Choose Color</span>
-                <button class="btn btn-icon" onclick="app.closeColorPicker()">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+    <div class="color-picker-overlay fixed inset-0 z-[60] hidden items-center justify-center bg-black/80 backdrop-blur-sm" id="color-picker-modal">
+        <div class="color-picker-container glass-panel w-80 rounded-xl overflow-hidden">
+            <div class="flex items-center justify-between p-4 border-b border-border-subtle">
+                <span class="text-sm font-medium text-white">Choose Color</span>
+                <button class="btn-icon-glass" onclick="app.closeColorPicker()">
+                    <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="color-picker-body">
-                <div class="color-picker-main">
-                    <div class="color-picker-saturation" id="color-saturation">
-                        <div class="saturation-white"></div>
-                        <div class="saturation-black"></div>
-                        <div class="saturation-cursor" id="saturation-cursor"></div>
+            <div class="p-4 space-y-4">
+                <div class="color-picker-saturation relative w-full h-40 rounded-lg cursor-crosshair" id="color-saturation">
+                    <div class="saturation-white absolute inset-0 rounded-lg bg-gradient-to-r from-white to-transparent"></div>
+                    <div class="saturation-black absolute inset-0 rounded-lg bg-gradient-to-t from-black to-transparent"></div>
+                    <div class="saturation-cursor absolute w-4 h-4 rounded-full border-2 border-white shadow -translate-x-1/2 -translate-y-1/2" id="saturation-cursor"></div>
+                </div>
+                <div class="color-picker-hue relative w-full h-4 rounded-lg cursor-pointer" id="color-hue" style="background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)">
+                    <div class="hue-cursor absolute w-4 h-6 rounded border-2 border-white shadow -translate-x-1/2 -top-1" id="hue-cursor"></div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="flex-1 flex rounded-lg overflow-hidden border border-border-subtle">
+                        <div class="w-10 h-10" id="color-preview-current"></div>
+                        <div class="w-10 h-10" id="color-preview-new"></div>
                     </div>
-                    <div class="color-picker-hue" id="color-hue">
-                        <div class="hue-cursor" id="hue-cursor"></div>
+                    <div class="flex-1">
+                        <input type="text" id="color-hex-input" class="input-glass w-full text-center font-mono" maxlength="7" placeholder="#000000">
                     </div>
                 </div>
-                <div class="color-picker-preview-row">
-                    <div class="color-preview-box">
-                        <div class="color-preview-current" id="color-preview-current"></div>
-                        <div class="color-preview-new" id="color-preview-new"></div>
+                <div class="color-picker-presets space-y-2">
+                    <div class="flex gap-1">
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#ef4444" data-color="#ef4444"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#f97316" data-color="#f97316"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#eab308" data-color="#eab308"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#22c55e" data-color="#22c55e"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#14b8a6" data-color="#14b8a6"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#06b6d4" data-color="#06b6d4"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#3b82f6" data-color="#3b82f6"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#8b5cf6" data-color="#8b5cf6"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#ec4899" data-color="#ec4899"></div>
                     </div>
-                    <div class="color-input-group">
-                        <label>HEX</label>
-                        <input type="text" id="color-hex-input" class="color-hex-input" maxlength="7" placeholder="#000000">
-                    </div>
-                </div>
-                <div class="color-picker-presets">
-                    <div class="preset-row">
-                        <div class="color-preset" style="background:#ef4444" data-color="#ef4444"></div>
-                        <div class="color-preset" style="background:#f97316" data-color="#f97316"></div>
-                        <div class="color-preset" style="background:#eab308" data-color="#eab308"></div>
-                        <div class="color-preset" style="background:#22c55e" data-color="#22c55e"></div>
-                        <div class="color-preset" style="background:#14b8a6" data-color="#14b8a6"></div>
-                        <div class="color-preset" style="background:#06b6d4" data-color="#06b6d4"></div>
-                        <div class="color-preset" style="background:#3b82f6" data-color="#3b82f6"></div>
-                        <div class="color-preset" style="background:#8b5cf6" data-color="#8b5cf6"></div>
-                        <div class="color-preset" style="background:#ec4899" data-color="#ec4899"></div>
-                    </div>
-                    <div class="preset-row">
-                        <div class="color-preset" style="background:#fca5a5" data-color="#fca5a5"></div>
-                        <div class="color-preset" style="background:#fdba74" data-color="#fdba74"></div>
-                        <div class="color-preset" style="background:#fde047" data-color="#fde047"></div>
-                        <div class="color-preset" style="background:#86efac" data-color="#86efac"></div>
-                        <div class="color-preset" style="background:#5eead4" data-color="#5eead4"></div>
-                        <div class="color-preset" style="background:#67e8f9" data-color="#67e8f9"></div>
-                        <div class="color-preset" style="background:#93c5fd" data-color="#93c5fd"></div>
-                        <div class="color-preset" style="background:#c4b5fd" data-color="#c4b5fd"></div>
-                        <div class="color-preset" style="background:#f9a8d4" data-color="#f9a8d4"></div>
-                    </div>
-                    <div class="preset-row">
-                        <div class="color-preset" style="background:#000000" data-color="#000000"></div>
-                        <div class="color-preset" style="background:#374151" data-color="#374151"></div>
-                        <div class="color-preset" style="background:#6b7280" data-color="#6b7280"></div>
-                        <div class="color-preset" style="background:#9ca3af" data-color="#9ca3af"></div>
-                        <div class="color-preset" style="background:#d1d5db" data-color="#d1d5db"></div>
-                        <div class="color-preset" style="background:#e5e7eb" data-color="#e5e7eb"></div>
-                        <div class="color-preset" style="background:#f3f4f6" data-color="#f3f4f6"></div>
-                        <div class="color-preset" style="background:#f9fafb" data-color="#f9fafb"></div>
-                        <div class="color-preset" style="background:#ffffff" data-color="#ffffff"></div>
+                    <div class="flex gap-1">
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#000000" data-color="#000000"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#374151" data-color="#374151"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#6b7280" data-color="#6b7280"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#9ca3af" data-color="#9ca3af"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#d1d5db" data-color="#d1d5db"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#e5e7eb" data-color="#e5e7eb"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#f3f4f6" data-color="#f3f4f6"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#f9fafb" data-color="#f9fafb"></div>
+                        <div class="color-preset w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform" style="background:#ffffff" data-color="#ffffff"></div>
                     </div>
                 </div>
             </div>
-            <div class="color-picker-footer">
-                <button class="btn btn-secondary" onclick="app.closeColorPicker()">Cancel</button>
-                <button class="btn btn-primary" onclick="app.confirmColorPicker()">Apply</button>
+            <div class="flex items-center justify-end gap-3 p-4 border-t border-border-subtle">
+                <button class="btn-glass" onclick="app.closeColorPicker()">Cancel</button>
+                <button class="btn-primary-glass" onclick="app.confirmColorPicker()">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Console Panel (Bottom) -->
+    <div class="console-panel fixed bottom-0 left-64 right-0 z-30 bg-sidebar border-t border-border-subtle transition-all duration-300 collapsed" id="console-panel">
+        <div class="console-resize-handle absolute top-0 left-0 right-0 h-1 cursor-ns-resize bg-transparent hover:bg-indigo-500/50 transition-colors" id="console-resize-handle"></div>
+        <div class="console-header flex items-center justify-between px-4 py-2 cursor-pointer" id="console-header">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-terminal text-indigo-400 text-xs"></i>
+                <span class="text-xs font-medium text-slate-300">Console</span>
+                <span class="console-badge bg-slate-700 text-slate-400 text-[10px] px-1.5 py-0.5 rounded-full" id="console-badge">0</span>
+            </div>
+            <div class="flex items-center gap-1">
+                <button class="btn-icon-glass btn-xs" id="console-clear" title="Clear Console">
+                    <i class="fa-solid fa-trash text-xs"></i>
+                </button>
+                <button class="btn-icon-glass btn-xs" id="console-toggle" title="Toggle Console">
+                    <i class="fa-solid fa-chevron-up text-xs"></i>
+                </button>
+            </div>
+        </div>
+        <div class="console-body overflow-hidden transition-all duration-300" id="console-body" style="height: 0px;">
+            <div class="console-content h-full overflow-y-auto p-3 font-mono text-xs bg-black/30" id="console-content">
+                <div class="console-welcome text-slate-500">
+                    <span class="text-slate-600">[System]</span>
+                    <span>MF Conductor initialized. Ready for operations.</span>
+                </div>
             </div>
         </div>
     </div>
