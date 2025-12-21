@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Full-height terminal output with sticky command input
   - Terminal-style dark background
   - Improved command prompt styling
+- **Console Logging**: Bottom console panel now shows all package operations
+  - Check for updates progress and results
+  - Install, upgrade, uninstall, and reinstall operations
+  - Individual package update checks
 
 ### Improved
 - **UI Design**: Complete redesign with sidebar navigation and glassmorphism
@@ -26,12 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Improved visual hierarchy and spacing
 - **Settings**: Theme and accent colors now properly apply throughout UI
 - **Context Menu**: Fixed "Set as Default" icon styling
+- **Package Update Performance**: 
+  - Switched from slow `pip list --outdated` to fast PyPI API calls
+  - Parallel checking (20 concurrent requests)
+  - Update checks now complete in seconds instead of minutes
+- **Expanded Node Details**:
+  - Properly sized icons (14px for buttons, 16px for requirements)
+  - Fixed layout and styling issues
+  - Restored expandable nodes list functionality
 
 ### Fixed
 - Terminal no longer clears on page refresh
 - Profile tiles properly styled and scaled
 - Settings modal works correctly with new UI
 - Node and package list scaling issues resolved
+- Bottom console panel now displays all operation logs
+- List header z-index fixed to prevent toolbar overlap when scrolling
+- Expanded node detail section styling and icon sizes
+- Package update check timeout issues resolved
 
 ## [1.1.0] - 2025-12-19
 
