@@ -395,13 +395,6 @@ def lookup_node_in_db(folder_name: str, custom_nodes_path: Path) -> Optional[dic
     normalized_folder = normalize_name(folder_name)
     folder_no_sep = normalized_folder.replace('-', '').replace('_', '')
     
-    # Debug first few lookups
-    if folder_lower.startswith('comfyui-a') or folder_lower.startswith('audio'):
-        print(f"[MF Conductor] DEBUG: Looking up '{folder_name}'")
-        print(f"[MF Conductor]   folder_lower: '{folder_lower}'")
-        print(f"[MF Conductor]   normalized: '{normalized_folder}'")
-        print(f"[MF Conductor]   In by_repo_name: {folder_lower in db['by_repo_name']}")
-    
     # Generate variations to try
     variations = [
         folder_lower,
@@ -1111,7 +1104,7 @@ class NodeScanner:
             try:
                 with open(self._cache_file, 'r', encoding='utf-8') as f:
                     cache = json.load(f)
-                    if cache.get('version') == '1.1':
+                    if cache.get('version') == '1.2':
                         return cache.get('nodes', [])
             except Exception:
                 pass
@@ -1158,7 +1151,7 @@ class NodeScanner:
         """Save scanned nodes to cache file"""
         try:
             cache_data = {
-                'version': '1.1',
+                'version': '1.2',
                 'scanned_at': datetime.now().isoformat(),
                 'nodes': [node.to_dict() for node in self.nodes]
             }

@@ -10,7 +10,20 @@ nodes_cache.json
 data/launch_*.py
 data/launch_*.bat
 
+# User data files (generated at runtime)
+data/favorites.json
+data/tags.json
+data/notes.json
+data/settings.json
+data/usage.json
+
 # IDE
 .vscode/
 .idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+
 

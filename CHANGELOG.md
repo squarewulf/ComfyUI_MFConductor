@@ -5,6 +5,34 @@ All notable changes to MF Conductor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-01-XX
+
+### Added
+- **Terminal History Persistence**: Terminal output now persists across page refreshes
+  - Auto-saves last 500 lines to localStorage
+  - Restores previous session on load
+- **Profile View Enhancements**: 
+  - Search, sort, and grid/list view toggle for profiles
+  - Sort by Name, Node Count, or Default First
+- **Terminal View Improvements**:
+  - Full-height terminal output with sticky command input
+  - Terminal-style dark background
+  - Improved command prompt styling
+
+### Improved
+- **UI Design**: Complete redesign with sidebar navigation and glassmorphism
+  - Modern dark theme with moss green/copper accent colors
+  - Removed offset border accent styling
+  - Improved visual hierarchy and spacing
+- **Settings**: Theme and accent colors now properly apply throughout UI
+- **Context Menu**: Fixed "Set as Default" icon styling
+
+### Fixed
+- Terminal no longer clears on page refresh
+- Profile tiles properly styled and scaled
+- Settings modal works correctly with new UI
+- Node and package list scaling issues resolved
+
 ## [1.1.0] - 2025-12-19
 
 ### Added

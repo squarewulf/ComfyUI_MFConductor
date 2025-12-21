@@ -1,6 +1,6 @@
 [project]
 name = "mf-conductor"
-version = "1.1.0"
+version = "1.2.0"
 description = "A powerful Custom Node Manager for ComfyUI with profile management, live console output, and standalone operation."
 readme = "README.md"
 license = {text = "MIT"}
@@ -33,10 +33,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/FriskCinema/MF_Conductor"
-Repository = "https://github.com/FriskCinema/MF_Conductor"
-Issues = "https://github.com/FriskCinema/MF_Conductor/issues"
-Documentation = "https://github.com/FriskCinema/MF_Conductor#readme"
+Homepage = "https://github.com/FriskCinema/ComfyUI_MFConductor"
+Repository = "https://github.com/FriskCinema/ComfyUI_MFConductor"
+Issues = "https://github.com/FriskCinema/ComfyUI_MFConductor/issues"
+Documentation = "https://github.com/FriskCinema/ComfyUI_MFConductor#readme"
 
 [build-system]
 requires = ["setuptools>=61.0"]
