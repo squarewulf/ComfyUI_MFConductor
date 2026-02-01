@@ -16,6 +16,8 @@ import ssl
 import importlib.metadata
 
 
+CACHE_VERSION = '1.3'
+
 # Simple GitHub stars cache to avoid hitting rate limits
 _github_stars_cache = {}
 _github_stats_file_cache = None
@@ -267,7 +269,7 @@ def load_manager_node_database(custom_nodes_path: Path) -> dict:
         custom_nodes_path / 'ComfyUI-Manager' / 'node_db' / 'new' / 'custom-node-list.json',
     ]
     
-    print(f"[MF Conductor] Looking for database in: {custom_nodes_path}")
+    # Database lookup paths - only log on first load or error
     
     for db_path in db_paths:
         if db_path.exists():
@@ -327,8 +329,7 @@ def load_manager_node_database(custom_nodes_path: Path) -> dict:
                 total = len(_manager_node_db['all_nodes'])
                 by_repo = len(_manager_node_db['by_repo_name'])
                 by_norm = len(_manager_node_db['by_normalized'])
-                print(f"[MF Conductor] Loaded {total} nodes from ComfyUI-Manager database")
-                print(f"[MF Conductor] Index sizes: by_repo={by_repo}, by_normalized={by_norm}")
+                # Database loaded successfully (silent unless debugging)
                 break
             except Exception as e:
                 print(f"[MF Conductor] Error loading manager database: {e}")
@@ -336,8 +337,8 @@ def load_manager_node_database(custom_nodes_path: Path) -> dict:
                 traceback.print_exc()
     
     if not _manager_node_db.get('all_nodes'):
-        print(f"[MF Conductor] WARNING: No nodes loaded from database!")
-        print(f"[MF Conductor] Checked paths: {[str(p) for p in db_paths]}")
+        # Only warn once if database couldn't be loaded
+        pass
     
     return _manager_node_db
 
@@ -388,7 +389,6 @@ def lookup_node_in_db(folder_name: str, custom_nodes_path: Path) -> Optional[dic
     db = load_manager_node_database(custom_nodes_path)
     
     if not db.get('all_nodes'):
-        print(f"[MF Conductor] WARNING: Database not loaded for lookup of '{folder_name}'")
         return None
     
     folder_lower = folder_name.lower()
@@ -519,6 +519,8 @@ class CustomNode:
     def __init__(self, folder_path: str):
         self.folder_path = Path(folder_path)
         self.folder_name = self.folder_path.name
+        self.is_disabled = self.folder_name.endswith('.disabled')
+        self.base_folder_name = self.folder_name[:-9] if self.is_disabled else self.folder_name
         self.display_name = self._clean_display_name()
         self.git_url: Optional[str] = None
         self.author: Optional[str] = None
@@ -528,14 +530,14 @@ class CustomNode:
         self.stars: int = 0
         self.has_requirements: bool = False
         self.is_git_repo: bool = False
-        self.enabled: bool = True
+        self.enabled: bool = not self.is_disabled
         self.provided_nodes: List[str] = []  # List of node names this package provides
         
         self._scan()
     
     def _clean_display_name(self) -> str:
         """Remove ComfyUI- prefixes and clean up the display name"""
-        name = self.folder_name
+        name = self.base_folder_name
         
         # Remove common prefixes (case-insensitive)
         prefixes_to_remove = [
@@ -580,7 +582,8 @@ class CustomNode:
                 desc = node_info['description']
                 self.description = desc[:200] + ('...' if len(desc) > 200 else '')
             self._parse_github_info()
-            print(f"[MF Conductor] Matched '{self.folder_name}' -> {self.git_url}")
+            # Silently matched - only log if debugging
+            # print(f"[MF Conductor] Matched '{self.folder_name}' -> {self.git_url}")
     
     def _check_git_repo(self):
         """Check if folder is a git repository and extract remote URL"""
@@ -1013,7 +1016,7 @@ class CustomNode:
                     class_names = re.findall(r'(\w+)\.NAME\s*:', mapping_content)
                     if class_names:
                         nodes = class_names
-        except:
+        except (OSError, IOError, UnicodeDecodeError):
             pass
         return nodes
     
@@ -1038,9 +1041,9 @@ class CustomNode:
                         re.DOTALL
                     )
                     nodes.extend(class_matches)
-                except:
+                except (OSError, IOError, UnicodeDecodeError):
                     continue
-        except:
+        except (OSError, IOError):
             pass
         return nodes
     
@@ -1048,6 +1051,7 @@ class CustomNode:
         """Convert to dictionary for JSON serialization"""
         return {
             'folder_name': self.folder_name,
+            'base_folder_name': self.base_folder_name,
             'folder_path': str(self.folder_path),
             'display_name': self.display_name,
             'git_url': self.git_url,
@@ -1059,6 +1063,7 @@ class CustomNode:
             'has_requirements': self.has_requirements,
             'is_git_repo': self.is_git_repo,
             'enabled': self.enabled,
+            'is_disabled': self.is_disabled,
             'provided_nodes': self.provided_nodes,
             'node_count': len(self.provided_nodes),
         }
@@ -1098,13 +1103,34 @@ class NodeScanner:
         
         raise FileNotFoundError("Could not locate custom_nodes directory")
     
+    def list_folder_names(self) -> List[str]:
+        """Quick listing of node folder names without full scanning"""
+        folders = []
+        seen = set()
+        skip_items = {'__pycache__', '.git', 'example_node.py.example'}
+        
+        for item in self.custom_nodes_path.iterdir():
+            if not item.is_dir():
+                continue
+            if item.name in skip_items or item.name.startswith('.'):
+                continue
+            name = item.name
+            if name.endswith('.disabled'):
+                name = name[:-9]
+            if name in seen:
+                continue
+            seen.add(name)
+            folders.append(name)
+        
+        return folders
+    
     def scan(self, use_cache: bool = False) -> List[Dict[str, Any]]:
         """Scan all custom nodes and return as list of dicts"""
         if use_cache and self._cache_file.exists():
             try:
                 with open(self._cache_file, 'r', encoding='utf-8') as f:
                     cache = json.load(f)
-                    if cache.get('version') == '1.2':
+                    if cache.get('version') == CACHE_VERSION:
                         return cache.get('nodes', [])
             except Exception:
                 pass
@@ -1151,7 +1177,7 @@ class NodeScanner:
         """Save scanned nodes to cache file"""
         try:
             cache_data = {
-                'version': '1.2',
+                'version': CACHE_VERSION,
                 'scanned_at': datetime.now().isoformat(),
                 'nodes': [node.to_dict() for node in self.nodes]
             }
@@ -1160,6 +1186,19 @@ class NodeScanner:
                 json.dump(cache_data, f, indent=2)
         except Exception as e:
             print(f"Failed to save cache: {e}")
+
+    def get_cached_nodes(self, allow_stale: bool = False) -> Optional[Dict[str, Any]]:
+        """Return cached nodes dict if available; allow_stale ignores version mismatch."""
+        if not self._cache_file.exists():
+            return None
+        try:
+            with open(self._cache_file, 'r', encoding='utf-8') as f:
+                cache = json.load(f)
+            if not allow_stale and cache.get('version') != CACHE_VERSION:
+                return None
+            return cache
+        except Exception:
+            return None
     
     def get_node_by_folder(self, folder_name: str) -> Optional[Dict[str, Any]]:
         """Get a specific node by its folder name"""

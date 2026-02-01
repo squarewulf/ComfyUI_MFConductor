@@ -8,13 +8,14 @@ print("[MF Conductor] Loading...")
 import os
 import sys
 import json
+import threading
 from pathlib import Path
 from aiohttp import web
 
 # Get the directory of this file
 MF_CONDUCTOR_DIR = Path(__file__).parent
 
-# Import local modules using relative imports or direct path
+# Keep this for legacy absolute imports, but prefer explicit relative imports below.
 sys.path.insert(0, str(MF_CONDUCTOR_DIR))
 
 # Import each module separately to identify which one fails
@@ -27,19 +28,22 @@ get_categories = None
 refresh_node_database = None
 
 try:
-    from node_scanner import NodeScanner
+    from .node_scanner import NodeScanner, get_node_requirements, refresh_installed_packages, CACHE_VERSION
     print("[MF Conductor] node_scanner loaded")
 except Exception as e:
     print(f"[MF Conductor] Error loading node_scanner: {e}")
+    get_node_requirements = None
+    refresh_installed_packages = None
 
 try:
-    from git_utils import GitUtils, PipUtils
+    # IMPORTANT: use explicit relative import to avoid name-collisions with ComfyUI-Manager's git_utils
+    from .git_utils import GitUtils, PipUtils
     print("[MF Conductor] git_utils loaded")
 except Exception as e:
     print(f"[MF Conductor] Error loading git_utils: {e}")
 
 try:
-    from user_data import get_user_data
+    from .user_data import get_user_data
     print("[MF Conductor] user_data loaded")
 except Exception as e:
     print(f"[MF Conductor] Error loading user_data: {e}")
@@ -47,10 +51,17 @@ except Exception as e:
     traceback.print_exc()
 
 try:
-    from browse_nodes import browse_nodes, get_categories, refresh_node_database
+    from .browse_nodes import browse_nodes, get_categories, refresh_node_database
     print("[MF Conductor] browse_nodes loaded")
 except Exception as e:
     print(f"[MF Conductor] Error loading browse_nodes: {e}")
+
+try:
+    from .usage_tracker import get_usage_tracker
+    print("[MF Conductor] usage_tracker loaded")
+except Exception as e:
+    print(f"[MF Conductor] Error loading usage_tracker: {e}")
+    get_usage_tracker = None
 
 # Global instances
 _scanner = None
@@ -82,6 +93,64 @@ def get_pip():
     return _pip
 
 
+def create_standalone_launcher():
+    """Create a launcher batch file at the portable root level"""
+    try:
+        # Path: custom_nodes/ComfyUI_MFConductor -> ComfyUI -> ComfyUI_windows_portable
+        portable_root = MF_CONDUCTOR_DIR.parent.parent.parent
+        launcher_path = portable_root / "Launch_MF_Conductor.bat"
+        
+        # Only create if it doesn't exist (don't overwrite user modifications)
+        if launcher_path.exists():
+            return
+        
+        # Find the Python executable
+        python_path = portable_root / "python_embeded" / "python.exe"
+        if not python_path.exists():
+            python_path = portable_root / "python" / "python.exe"
+        
+        # Use relative paths in the batch file for portability
+        batch_content = f'''@echo off
+title MF Conductor - Standalone Mode
+cd /d "%~dp0"
+
+echo ========================================
+echo   MF Conductor - Standalone Server
+echo ========================================
+echo.
+
+REM Find Python executable
+if exist "python_embeded\\python.exe" (
+    set PYTHON=python_embeded\\python.exe
+) else if exist "python\\python.exe" (
+    set PYTHON=python\\python.exe
+) else (
+    echo ERROR: Python not found!
+    pause
+    exit /b 1
+)
+
+echo Starting MF Conductor on http://localhost:8199
+echo Press Ctrl+C to stop the server
+echo.
+
+"%PYTHON%" "ComfyUI\\custom_nodes\\ComfyUI_MFConductor\\standalone_server.py"
+
+pause
+'''
+        
+        with open(launcher_path, 'w', encoding='utf-8') as f:
+            f.write(batch_content)
+        
+        print(f"[MF Conductor] Created standalone launcher: {launcher_path}")
+    except Exception as e:
+        print(f"[MF Conductor] Could not create launcher: {e}")
+
+
+# Create the standalone launcher when module loads
+create_standalone_launcher()
+
+
 # =============================================================================
 # ComfyUI API Routes
 # =============================================================================
@@ -90,16 +159,33 @@ async def api_get_nodes(request):
     """Get list of all custom nodes"""
     try:
         scanner = get_scanner()
+        fast = request.query.get('fast', 'false').lower() in ('1', 'true', 'yes')
+        if fast:
+            cache = scanner.get_cached_nodes(allow_stale=True)
+            if cache and cache.get('nodes') is not None:
+                cache_version = cache.get('version')
+                stale = cache_version != CACHE_VERSION
+                if stale:
+                    threading.Thread(target=scanner.refresh, daemon=True).start()
+                return web.json_response({
+                    'success': True,
+                    'nodes': cache.get('nodes', []),
+                    'scanned_at': cache.get('scanned_at'),
+                    'total': len(cache.get('nodes', [])),
+                    'cache_used': True,
+                    'cache_stale': stale
+                })
         nodes = scanner.scan(use_cache=True)
         
         from datetime import datetime
         return web.json_response({
+            'success': True,
             'nodes': nodes,
             'scanned_at': datetime.now().isoformat(),
             'total': len(nodes)
         })
     except Exception as e:
-        return web.json_response({'error': str(e)}, status=500)
+        return web.json_response({'success': False, 'message': str(e)}, status=500)
 
 
 async def api_refresh_nodes(request):
@@ -110,12 +196,13 @@ async def api_refresh_nodes(request):
         
         from datetime import datetime
         return web.json_response({
+            'success': True,
             'nodes': nodes,
             'scanned_at': datetime.now().isoformat(),
             'total': len(nodes)
         })
     except Exception as e:
-        return web.json_response({'error': str(e)}, status=500)
+        return web.json_response({'success': False, 'message': str(e)}, status=500)
 
 
 async def api_update_node(request):
@@ -174,7 +261,7 @@ async def api_install_node(request):
         # Refresh cache
         scanner.refresh()
         
-        return web.json_response({'success': True, 'message': message})
+        return web.json_response({'success': True, 'message': message, 'folder_name': folder_name})
     except Exception as e:
         return web.json_response({'success': False, 'message': str(e)}, status=500)
 
@@ -361,7 +448,7 @@ try:
             if not folder_path.exists():
                 return web.json_response({'success': False, 'message': 'Folder not found', 'requirements': []})
             
-            from node_scanner import get_node_requirements
+            # get_node_requirements imported at module level
             requirements = get_node_requirements(folder_path)
             
             return web.json_response({
@@ -393,8 +480,8 @@ try:
                 timeout=300
             )
             
-            from node_scanner import refresh_installed_packages
-            refresh_installed_packages()
+            if refresh_installed_packages:
+                refresh_installed_packages()
             
             if result.returncode == 0:
                 return web.json_response({'success': True, 'message': f'Successfully installed {package_name}'})
@@ -659,6 +746,28 @@ try:
             return web.json_response({'success': True, 'message': f'{name} set as default'})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.post('/mf_conductor/api/profiles/clear-default')
+    async def _mnf_clear_default_profile(request):
+        try:
+            user_data = get_user_data()
+            profiles = user_data.get_profiles()
+            for profile in profiles.values():
+                profile['is_default'] = False
+            user_data._profiles = profiles
+            user_data._save_json(user_data.profiles_file, profiles)
+            return web.json_response({'success': True, 'message': 'Default profile cleared'})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.post('/mf_conductor/api/profiles/load-presets')
+    async def _mnf_load_preset_profiles(request):
+        try:
+            user_data = get_user_data()
+            count = user_data.load_preset_profiles()
+            return web.json_response({'success': True, 'message': f'Loaded {count} preset profiles', 'count': count})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
     
     # ==================== BACKUP / RESTORE ====================
     
@@ -690,6 +799,84 @@ try:
             user_data = get_user_data()
             nodes = scanner.scan(use_cache=True)
             return web.json_response({'success': True, 'data': user_data.export_node_list(nodes)})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
+    # ==================== USAGE ANALYTICS ====================
+    
+    @routes.get('/mf_conductor/api/usage/stats')
+    async def _mnf_usage_stats(request):
+        try:
+            if get_usage_tracker is None:
+                return web.json_response({'success': False, 'message': 'Usage tracker not available'}, status=501)
+            
+            comfy_root = MF_CONDUCTOR_DIR.parent.parent
+            tracker = get_usage_tracker(comfy_root)
+            
+            # Build node-to-package mapping from installed nodes
+            scanner = get_scanner()
+            nodes = scanner.scan(use_cache=True)
+            tracker.build_node_package_map(nodes)
+            
+            data = tracker.get_usage_stats()
+            return web.json_response({'success': True, **data})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
+    @routes.get('/mf_conductor/api/usage/progress')
+    async def _mnf_usage_progress(request):
+        try:
+            if get_usage_tracker is None:
+                return web.json_response({'success': False, 'message': 'Usage tracker not available'}, status=501)
+            
+            comfy_root = MF_CONDUCTOR_DIR.parent.parent
+            tracker = get_usage_tracker(comfy_root)
+            progress = tracker.get_scan_progress()
+            return web.json_response({'success': True, **progress})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
+    @routes.post('/mf_conductor/api/usage/scan')
+    async def _mnf_usage_scan(request):
+        try:
+            if get_usage_tracker is None:
+                return web.json_response({'success': False, 'message': 'Usage tracker not available'}, status=501)
+            
+            import threading
+            data = await request.json()
+            
+            comfy_root = MF_CONDUCTOR_DIR.parent.parent
+            tracker = get_usage_tracker(comfy_root)
+            
+            # Build node-to-package mapping first
+            scanner = get_scanner()
+            nodes = scanner.scan(use_cache=True)
+            tracker.build_node_package_map(nodes)
+            
+            # Start scan in background thread
+            folders = data.get('folders', None)
+            force = data.get('force', False)
+            
+            def run_scan():
+                tracker.scan_workflows(folders, force)
+            
+            thread = threading.Thread(target=run_scan, daemon=True)
+            thread.start()
+            
+            return web.json_response({'success': True, 'message': 'Scan started'})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
+    @routes.post('/mf_conductor/api/usage/clear')
+    async def _mnf_usage_clear(request):
+        try:
+            if get_usage_tracker is None:
+                return web.json_response({'success': False, 'message': 'Usage tracker not available'}, status=501)
+            
+            comfy_root = MF_CONDUCTOR_DIR.parent.parent
+            tracker = get_usage_tracker(comfy_root)
+            tracker.clear_data()
+            return web.json_response({'success': True, 'message': 'Usage data cleared'})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
     
@@ -867,7 +1054,7 @@ try:
             try:
                 pip = get_pip()
                 python_path = pip.python_path if pip else None
-            except:
+            except Exception:
                 python_path = None
             
             # Find python executable
@@ -914,7 +1101,7 @@ try:
             try:
                 pip = get_pip()
                 python_path = pip.python_path if pip else None
-            except:
+            except Exception:
                 python_path = None
             
             if not python_path:
@@ -967,14 +1154,14 @@ try:
                                             'current_version': current_version,
                                             'latest_version': latest_version
                                         }
-                                except:
+                                except (ImportError, ValueError, TypeError):
                                     if latest_version > current_version:
                                         return {
                                             'name': package_name,
                                             'current_version': current_version,
                                             'latest_version': latest_version
                                         }
-                except:
+                except (aiohttp.ClientError, asyncio.TimeoutError, Exception):
                     pass  # Network error - skip this package
                 
                 return None
@@ -993,6 +1180,120 @@ try:
             print(f"[MF_Conductor] Error checking package updates: {e}")
             return web.json_response({'success': False, 'message': str(e)}, status=500)
     
+    @routes.post('/mf_conductor/api/packages/check-single')
+    async def _mnf_check_single_package_update(request):
+        import asyncio
+        import aiohttp
+        
+        try:
+            data = await request.json()
+            package_name = data.get('package_name', '')
+            
+            if not package_name:
+                return web.json_response({'success': False, 'message': 'Package name is required'}, status=400)
+            
+            try:
+                pip = get_pip()
+                python_path = pip.python_path if pip else None
+            except Exception:
+                python_path = None
+            
+            if not python_path:
+                import sys
+                python_path = sys.executable
+            
+            # Get current installed version
+            proc = await asyncio.create_subprocess_exec(
+                python_path, '-m', 'pip', 'show', package_name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
+            
+            current_version = 'unknown'
+            if proc.returncode == 0:
+                for line in stdout.decode().split('\n'):
+                    if line.startswith('Version:'):
+                        current_version = line.split(':', 1)[1].strip()
+                        break
+            
+            # Check PyPI for available versions
+            try:
+                url = f'https://pypi.org/pypi/{package_name}/json'
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                        if response.status == 404:
+                            return web.json_response({
+                                'success': True,
+                                'name': package_name,
+                                'current_version': current_version,
+                                'latest_version': current_version,
+                                'has_update': False,
+                                'available_versions': []
+                            })
+                        
+                        pypi_data = await response.json()
+                        latest_version = pypi_data.get('info', {}).get('version', current_version)
+                        
+                        # Get available versions newer than current
+                        available_versions = []
+                        releases = pypi_data.get('releases', {})
+                        
+                        try:
+                            from packaging import version as pkg_version
+                            current_parsed = pkg_version.parse(current_version) if current_version != 'unknown' else None
+                            
+                            for ver in releases.keys():
+                                try:
+                                    ver_parsed = pkg_version.parse(ver)
+                                    if current_parsed and ver_parsed > current_parsed:
+                                        if releases[ver]:  # Has files
+                                            available_versions.append(ver)
+                                except (ValueError, TypeError, KeyError):
+                                    continue
+                            
+                            available_versions.sort(key=lambda v: pkg_version.parse(v), reverse=True)
+                        except (ImportError, ValueError, KeyError):
+                            if latest_version != current_version:
+                                available_versions = [latest_version]
+                        
+                        # Limit to 10 most recent
+                        available_versions = available_versions[:10]
+                        
+                        # Check if update available
+                        has_update = False
+                        if latest_version and latest_version != 'unknown' and latest_version != current_version:
+                            try:
+                                from packaging import version
+                                has_update = version.parse(latest_version) > version.parse(current_version)
+                            except (ImportError, ValueError, TypeError):
+                                has_update = latest_version > current_version
+                        
+                        return web.json_response({
+                            'success': True,
+                            'name': package_name,
+                            'current_version': current_version,
+                            'latest_version': latest_version,
+                            'has_update': has_update,
+                            'available_versions': available_versions
+                        })
+            except Exception as pypi_error:
+                return web.json_response({
+                    'success': True,
+                    'name': package_name,
+                    'current_version': current_version,
+                    'latest_version': current_version,
+                    'has_update': False,
+                    'available_versions': []
+                })
+                
+        except asyncio.TimeoutError:
+            return web.json_response({'success': False, 'message': 'Check timed out'}, status=500)
+        except Exception as e:
+            print(f"[MF_Conductor] Error checking single package: {e}")
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+    
     @routes.post('/mf_conductor/api/packages/install')
     async def _mnf_install_package(request):
         import asyncio
@@ -1007,7 +1308,7 @@ try:
             try:
                 pip = get_pip()
                 python_path = pip.python_path if pip else None
-            except:
+            except Exception:
                 python_path = None
             
             if not python_path:
@@ -1050,7 +1351,7 @@ try:
             try:
                 pip = get_pip()
                 python_path = pip.python_path if pip else None
-            except:
+            except Exception:
                 python_path = None
             
             if not python_path:
@@ -1086,6 +1387,7 @@ try:
         try:
             data = await request.json()
             package_name = data.get('package_name', '')
+            version = data.get('version', None)  # Optional specific version
             
             if not package_name:
                 return web.json_response({'success': False, 'message': 'Package name is required'}, status=400)
@@ -1093,15 +1395,18 @@ try:
             try:
                 pip = get_pip()
                 python_path = pip.python_path if pip else None
-            except:
+            except Exception:
                 python_path = None
             
             if not python_path:
                 import sys
                 python_path = sys.executable
             
+            # Build package spec with optional version
+            package_spec = f'{package_name}=={version}' if version else package_name
+            
             proc = await asyncio.create_subprocess_exec(
-                python_path, '-m', 'pip', 'install', '--upgrade', package_name,
+                python_path, '-m', 'pip', 'install', '--upgrade', package_spec,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -1110,7 +1415,8 @@ try:
             
             if proc.returncode == 0:
                 refresh_installed_packages()
-                return web.json_response({'success': True, 'message': f'Successfully upgraded {package_name}'})
+                version_msg = f' to {version}' if version else ''
+                return web.json_response({'success': True, 'message': f'Successfully upgraded {package_name}{version_msg}'})
             else:
                 return web.json_response({
                     'success': False,
@@ -1136,7 +1442,7 @@ try:
             try:
                 pip = get_pip()
                 python_path = pip.python_path if pip else None
-            except:
+            except Exception:
                 python_path = None
             
             if not python_path:
@@ -1276,44 +1582,11 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
     
     @routes.post('/mf_conductor/api/comfy/run-command')
     async def _mnf_comfy_run_command(request):
-        """Run a pip/python command"""
-        try:
-            import asyncio
-            data = await request.json()
-            command = data.get('command', '')
-            
-            if not command:
-                return web.json_response({'success': False, 'message': 'Command is required'}, status=400)
-            
-            # Find Python executable
-            comfy_root = Path(__file__).parent.parent.parent
-            portable_root = comfy_root.parent
-            
-            python_path = portable_root / 'python_embeded' / 'python.exe'
-            if not python_path.exists():
-                python_path = Path(sys.executable)
-            
-            cmd_parts = command.split()
-            
-            proc = await asyncio.create_subprocess_exec(
-                str(python_path), '-m', *cmd_parts,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(comfy_root)
-            )
-            
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-            
-            return web.json_response({
-                'success': True,
-                'output': stdout.decode('utf-8', errors='replace') if stdout else None,
-                'error': stderr.decode('utf-8', errors='replace') if stderr else None,
-                'return_code': proc.returncode
-            })
-        except asyncio.TimeoutError:
-            return web.json_response({'success': False, 'message': 'Command timed out after 120 seconds'})
-        except Exception as e:
-            return web.json_response({'success': False, 'message': str(e)}, status=500)
+        """Command execution is not allowed in integrated mode"""
+        return web.json_response({
+            'success': False,
+            'message': 'Command execution is disabled in integrated mode. Use standalone mode instead.'
+        }, status=403)
     
     # ==================== SHORTCUT CREATION ====================
     
@@ -1575,7 +1848,7 @@ $Shortcut.Save()
             file_path = file_path.resolve()
             if not str(file_path).startswith(str(web_dir.resolve())):
                 return aiohttp_web.Response(status=403, text='Forbidden')
-        except:
+        except (OSError, ValueError):
             return aiohttp_web.Response(status=404, text='Not found')
         
         if not file_path.exists():
@@ -1604,6 +1877,45 @@ $Shortcut.Save()
             content = f.read()
         
         return aiohttp_web.Response(body=content, content_type=content_type)
+    
+    # ==================== FILES API (Integrated Mode Stubs) ====================
+    # Files feature is only available in standalone mode
+    
+    @routes.get('/mf_conductor/api/files')
+    async def _mnf_files_list(request):
+        """Files browser not available in integrated mode"""
+        return web.json_response({
+            'success': False,
+            'message': 'File browser is only available in standalone mode. Run Launch_MF_Conductor.bat instead.',
+            'files': [],
+            'total': 0,
+            'total_size': 0
+        })
+    
+    @routes.get('/mf_conductor/api/files/thumbnail/{folder}/{path:.*}')
+    async def _mnf_files_thumbnail(request):
+        """File thumbnails not available in integrated mode"""
+        return web.json_response({'success': False, 'message': 'Not available in integrated mode'})
+    
+    @routes.get('/mf_conductor/api/files/workflow/{folder}/{path:.*}')
+    async def _mnf_files_workflow(request):
+        """File workflow extraction not available in integrated mode"""
+        return web.json_response({'success': False, 'message': 'Not available in integrated mode'})
+    
+    @routes.get('/mf_conductor/api/files/serve/{folder}/{path:.*}')
+    async def _mnf_files_serve(request):
+        """File serving not available in integrated mode"""
+        return web.json_response({'success': False, 'message': 'Not available in integrated mode'})
+    
+    @routes.post('/mf_conductor/api/files/open-location')
+    async def _mnf_files_open_location(request):
+        """Open file location not available in integrated mode"""
+        return web.json_response({'success': False, 'message': 'Not available in integrated mode'})
+    
+    @routes.post('/mf_conductor/api/files/delete')
+    async def _mnf_files_delete(request):
+        """File deletion not available in integrated mode"""
+        return web.json_response({'success': False, 'message': 'Not available in integrated mode'})
     
     @routes.get('/mf_conductor')
     async def _mnf_redirect(request):

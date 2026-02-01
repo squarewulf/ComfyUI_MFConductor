@@ -2,8 +2,8 @@
  * MF Conductor - Custom Node Manager
  * Frontend Application
  * 
- * @version 1.2.0
- * @author FriskCinema
+ * @version 1.3.0
+ * @author squarewulf
  */
 
 // ==================== UTILITY FUNCTIONS ====================
@@ -76,6 +76,18 @@ class MFConductor {
         this.profileExcludedPackages = new Set();
         this.installedPackages = [];
         
+        // File browser
+        this.filesData = [];
+        this.filesFolder = 'output';
+        this.filesRecursive = false;
+        this.filesSubfolder = '';
+        this.filesSortBy = 'date';
+        this.filesSortDir = 'desc';
+        this.filesTypeFilter = '';
+        this.filesSearch = '';
+        this.filesViewMode = 'grid';
+        this.selectedFile = null;
+        
         // Required nodes/packages - these are essential for ComfyUI to function
         this.requiredNodes = new Set([
             'ComfyUI-Manager'  // Highly recommended for node management
@@ -101,6 +113,9 @@ class MFConductor {
         this.consoleOutput = [];
         this.consoleAutoScroll = true;
         this.consolePolling = null;
+        this.backendLogPolling = null;
+        this.backendLogIndex = 0;
+        this.serverReadyCheckInterval = null;
         this.defaultProfile = null;
         
         // Undo system
@@ -154,14 +169,13 @@ class MFConductor {
     }
     
     detectApiBase() {
-        // Check if we're running in standalone mode or integrated
-        const port = window.location.port;
-        if (port === '8199') {
-            // Standalone mode
-            return '';
+        const path = window.location.pathname || '';
+        if (path.startsWith('/mf_conductor')) {
+            return '/mf_conductor';
         }
-        // Integrated mode - ComfyUI typically runs on 8188
-        return '/mf_conductor';
+        
+        // Standalone mode (including reverse proxies/default ports)
+        return '';
     }
     
     // ==================== SYSTEM THEME SYNC ====================
@@ -364,20 +378,73 @@ class MFConductor {
     
     async init() {
         this.loadSettings(); // Load settings first to apply theme
-        this.bindElements();
+        this.bindElements(); // Must be called before any logging
+        this.log('MF Conductor initializing...', 'info');
         this.bindEvents();
         this.bindMainTabs();
         this.bindComfyControls();
         this.bindSettingsEvents();
         this.loadUserPreferences();
         this.setupKeyboardShortcuts();
+        this.log('Loading user data...', 'info');
         await this.loadUserData();
         await this.loadProfiles();
         this.renderProfilesGrid();
         this.updateComfyControls();
         this.restoreConsoleFromStorage(); // Restore terminal history
         this.checkComfyStatus();
+        this.startBackendLogPolling(); // Start polling for backend logs
+        this.setupCleanupHandler(); // Clean up on page unload
+        this.setupHashNavigation(); // Handle URL hash for tab persistence
+        this.log('MF Conductor ready', 'success');
         // Don't load nodes immediately - wait until Nodes tab is clicked
+    }
+    
+    setupHashNavigation() {
+        const isIntegrated = this.apiBase === '/mf_conductor';
+        
+        // In integrated mode, hide Files tab and Profiles features that don't work
+        if (isIntegrated) {
+            const filesNav = document.getElementById('nav-files');
+            if (filesNav) filesNav.style.display = 'none';
+            
+            // Also hide console nav since it's not useful in integrated mode
+            const consoleNav = document.getElementById('nav-console');
+            if (consoleNav) consoleNav.style.display = 'none';
+        }
+        
+        // Valid tab names (exclude files and console in integrated mode)
+        const validTabs = isIntegrated 
+            ? ['profiles', 'nodes', 'packages', 'community']
+            : ['profiles', 'files', 'nodes', 'packages', 'console', 'community'];
+        
+        // Check URL hash on load and switch to that tab
+        const hash = window.location.hash.slice(1); // Remove '#'
+        if (hash && validTabs.includes(hash)) {
+            this.switchMainTab(hash, false); // Don't update hash again
+        } else if (isIntegrated) {
+            // Default to Nodes tab in integrated mode (Profiles less useful)
+            this.switchMainTab('nodes', false);
+        }
+        
+        // Listen for hash changes (browser back/forward)
+        window.addEventListener('hashchange', () => {
+            const newHash = window.location.hash.slice(1);
+            if (newHash && validTabs.includes(newHash) && newHash !== this.currentTab) {
+                this.switchMainTab(newHash, false);
+            }
+        });
+    }
+    
+    setupCleanupHandler() {
+        window.addEventListener('beforeunload', () => {
+            this.stopConsolePolling();
+            this.stopBackendLogPolling();
+            if (this.serverReadyCheckInterval) {
+                clearInterval(this.serverReadyCheckInterval);
+                this.serverReadyCheckInterval = null;
+            }
+        });
     }
     
     // Main Tab Navigation (Sidebar)
@@ -386,7 +453,7 @@ class MFConductor {
         // This method is kept for compatibility
     }
     
-    async switchMainTab(tabName) {
+    async switchMainTab(tabName, updateHash = true) {
         // Update sidebar links
         document.querySelectorAll('.sidebar-link').forEach(link => link.classList.remove('active'));
         document.getElementById(`nav-${tabName}`)?.classList.add('active');
@@ -404,6 +471,11 @@ class MFConductor {
         
         this.currentTab = tabName;
         
+        // Update URL hash for persistence across refreshes
+        if (updateHash && window.location.hash !== `#${tabName}`) {
+            history.replaceState(null, '', `#${tabName}`);
+        }
+        
         // Load content for tab if needed
         if (tabName === 'nodes' && this.nodes.length === 0) {
             await this.loadNodes();
@@ -417,16 +489,22 @@ class MFConductor {
                 this.showExternalComfyMessage(this.comfyPort);
             }
             this.scrollConsoleToBottom();
+        } else if (tabName === 'files') {
+            await this.loadFilesTab();
         }
     }
     
     // Profiles Grid
     async loadProfiles() {
+        this.log('Loading profiles...', 'info');
         try {
             const response = await fetch(`${this.apiBase}/api/profiles`);
             const data = await response.json();
             this.profiles = data.success ? data.profiles : {};
+            const count = Object.keys(this.profiles).length;
+            this.log(`Loaded ${count} profile${count !== 1 ? 's' : ''}`, 'success');
         } catch (error) {
+            this.log(`Error loading profiles: ${error.message}`, 'error');
             console.error('Error loading profiles:', error);
             this.profiles = {};
         }
@@ -601,10 +679,16 @@ class MFConductor {
         
         grid.innerHTML = html;
         
-        // Bind right-click context menu to profile tiles/rows
-        grid.querySelectorAll('.profile-tile:not(.profile-tile-add), .profile-row:not(.profile-row-add)').forEach(tile => {
-            tile.addEventListener('contextmenu', (e) => this.showProfileContextMenu(e, tile.dataset.profile));
-        });
+        // Use event delegation for context menu (bind once on grid, not each tile)
+        if (!grid.dataset.contextMenuBound) {
+            grid.dataset.contextMenuBound = 'true';
+            grid.addEventListener('contextmenu', (e) => {
+                const tile = e.target.closest('.profile-tile:not(.profile-tile-add), .profile-row:not(.profile-row-add)');
+                if (tile) {
+                    this.showProfileContextMenu(e, tile.dataset.profile);
+                }
+            });
+        }
     }
     
     bindProfilesToolbar() {
@@ -654,12 +738,20 @@ class MFConductor {
         // View toggle
         const viewGridBtn = document.getElementById('profiles-view-grid');
         const viewListBtn = document.getElementById('profiles-view-list');
+        
+        // Apply loaded preferences
+        if (viewGridBtn && viewListBtn) {
+            viewGridBtn.classList.toggle('active', this.profilesViewMode !== 'list');
+            viewListBtn.classList.toggle('active', this.profilesViewMode === 'list');
+        }
+        
         if (viewGridBtn) {
             viewGridBtn.addEventListener('click', () => {
                 this.profilesViewMode = 'grid';
                 viewGridBtn.classList.add('active');
                 viewListBtn?.classList.remove('active');
                 this.renderProfilesGrid();
+                this.saveUserPreferences();
             });
         }
         if (viewListBtn) {
@@ -668,6 +760,7 @@ class MFConductor {
                 viewListBtn.classList.add('active');
                 viewGridBtn?.classList.remove('active');
                 this.renderProfilesGrid();
+                this.saveUserPreferences();
             });
         }
     }
@@ -816,6 +909,7 @@ class MFConductor {
         const savePath = await this.showSaveFileDialog('MF Conductor.lnk');
         if (!savePath) return; // User cancelled
         
+        this.log(`Creating MF Conductor shortcut: ${savePath}`, 'info');
         try {
             this.showToast('info', 'Creating shortcut...');
             
@@ -827,11 +921,14 @@ class MFConductor {
             
             const data = await response.json();
             if (data.success) {
+                this.log(`MF Conductor shortcut created successfully: ${savePath}`, 'success');
                 this.showToast('success', data.message || 'Shortcut created');
             } else {
+                this.log(`Failed to create shortcut: ${data.message}`, 'error');
                 this.showToast('error', data.message || 'Failed to create shortcut');
             }
         } catch (error) {
+            this.log(`Error creating shortcut: ${error.message}`, 'error');
             this.showToast('error', this.parseError(error, 'Failed to create shortcut'));
         }
     }
@@ -848,6 +945,7 @@ class MFConductor {
         const savePath = await this.showSaveFileDialog(`ComfyUI - ${safeName}.lnk`);
         if (!savePath) return; // User cancelled
         
+        this.log(`Creating profile shortcut: ${profileName} → ${savePath}`, 'info');
         try {
             this.showToast('info', `Creating shortcut for "${profileName}"...`);
             
@@ -862,11 +960,14 @@ class MFConductor {
             
             const data = await response.json();
             if (data.success) {
+                this.log(`Profile shortcut created successfully: ${savePath}`, 'success');
                 this.showToast('success', data.message || `Shortcut created for "${profileName}"`);
             } else {
+                this.log(`Failed to create profile shortcut: ${data.message}`, 'error');
                 this.showToast('error', data.message || 'Failed to create shortcut');
             }
         } catch (error) {
+            this.log(`Error creating profile shortcut: ${error.message}`, 'error');
             this.showToast('error', this.parseError(error, 'Failed to create shortcut'));
         }
     }
@@ -894,7 +995,9 @@ class MFConductor {
         try {
             const response = await fetch(`${this.apiBase}/api/system/desktop-path`);
             const data = await response.json();
-            const defaultPath = data.success ? `${data.path}\\${suggestedName}` : `C:\\Desktop\\${suggestedName}`;
+            const isWindows = /windows/i.test(navigator.userAgent || '');
+            const separator = isWindows ? '\\' : '/';
+            const defaultPath = data.success ? `${data.path}${separator}${suggestedName}` : `Desktop${separator}${suggestedName}`;
             
             return await this.showPrompt({
                 title: 'Save Shortcut',
@@ -904,11 +1007,13 @@ class MFConductor {
                 confirmText: 'Create'
             });
         } catch (e) {
+            const isWindows = /windows/i.test(navigator.userAgent || '');
+            const separator = isWindows ? '\\' : '/';
             return await this.showPrompt({
                 title: 'Save Shortcut',
                 message: 'Enter the full path where you want to save the shortcut:',
-                placeholder: `C:\\Users\\Desktop\\${suggestedName}`,
-                defaultValue: `C:\\Users\\Desktop\\${suggestedName}`,
+                placeholder: `Desktop${separator}${suggestedName}`,
+                defaultValue: `Desktop${separator}${suggestedName}`,
                 confirmText: 'Create'
             });
         }
@@ -929,6 +1034,7 @@ class MFConductor {
     
     
     async deleteProfileConfirmed(profileName) {
+        this.log(`Deleting profile: ${profileName}`, 'warning');
         try {
             const response = await fetch(`${this.apiBase}/api/profiles/delete`, {
                 method: 'POST',
@@ -937,11 +1043,13 @@ class MFConductor {
             });
             const data = await response.json();
             if (data.success) {
+                this.log(`Profile "${profileName}" deleted successfully`, 'success');
                 this.showToast('success', `Profile "${profileName}" deleted`);
                 await this.loadProfiles();
                 this.renderProfilesGrid();
                 this.updateComfyControls();
             } else {
+                this.log(`Failed to delete profile: ${data.message}`, 'error');
                 this.showToast('error', data.message);
             }
         } catch (error) {
@@ -1009,10 +1117,17 @@ class MFConductor {
     async launchProfile(profileName) {
         // Check if already running
         if (this.comfyStatus === 'running' || this.comfyStatus === 'starting') {
+            this.log('ComfyUI is already running', 'warning');
             this.showToast('warning', 'ComfyUI is already running');
             return;
         }
         
+        // Switch to terminal page immediately and show splash
+        this.switchMainTab('console');
+        this.clearConsoleOutput();
+        this.showSplashScreen(); // Non-blocking
+        
+        this.log(`Launching ComfyUI with profile "${profileName}"...`, 'info');
         this.updateComfyStatus('starting');
         this.appendToConsole(`Launching ComfyUI with profile "${profileName}"...`, 'info');
         
@@ -1026,12 +1141,14 @@ class MFConductor {
             const data = await response.json();
             
             if (data.success) {
+                this.log('ComfyUI process started', 'success');
                 this.showToast('success', `Launching ${profileName}...`);
                 this.appendToConsole('ComfyUI process started', 'success');
                 this.startConsolePolling();
-                // Switch to console tab to show output
-                this.switchMainTab('console');
+                // Start checking if server is ready
+                this.checkComfyServerReady();
             } else {
+                this.log(`Failed to launch ComfyUI: ${data.message}`, 'error');
                 this.updateComfyStatus('error');
                 this.appendToConsole(`Failed to launch: ${data.message}`, 'error');
                 this.showToast('error', data.message);
@@ -1047,7 +1164,152 @@ class MFConductor {
         }
     }
     
+    async promptEnableInProfiles(nodeFolderName) {
+        // Get list of profiles
+        const profileNames = Object.keys(this.profiles);
+        
+        if (profileNames.length === 0) {
+            return; // No profiles to enable in
+        }
+        
+        // Create modal content with checkboxes
+        const checkboxes = profileNames.map((name, idx) => {
+            const profile = this.profiles[name];
+            const isDefault = profile.is_default ? ' (default)' : '';
+            return `
+                <label class="profile-checkbox-item">
+                    <input type="checkbox" name="profile" value="${this.escapeHtml(name)}" ${idx === 0 ? 'checked' : ''}>
+                    <span>${this.escapeHtml(name)}${isDefault}</span>
+                </label>
+            `;
+        }).join('');
+        
+        // Create and show modal
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h3>Enable Node in Profiles?</h3>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-slate-400 mb-4">Would you like to enable <strong class="text-white">${this.escapeHtml(nodeFolderName)}</strong> in any profiles?</p>
+                    
+                    <div class="mb-4">
+                        <label class="profile-checkbox-item select-all">
+                            <input type="checkbox" id="enable-all-profiles">
+                            <span class="font-semibold">Select All</span>
+                        </label>
+                    </div>
+                    
+                    <div class="profile-checkbox-list">
+                        ${checkboxes}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-glass" onclick="this.closest('.modal-overlay').remove()">Skip</button>
+                    <button class="btn btn-primary" id="enable-profiles-confirm">Enable Selected</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Add show class after a frame to trigger animation
+        requestAnimationFrame(() => {
+            modal.classList.add('show');
+        });
+        
+        // Handle select all
+        const selectAllCheckbox = modal.querySelector('#enable-all-profiles');
+        const profileCheckboxes = modal.querySelectorAll('input[name="profile"]');
+        
+        selectAllCheckbox.addEventListener('change', () => {
+            profileCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+        });
+        
+        // Handle confirm
+        return new Promise((resolve) => {
+            modal.querySelector('#enable-profiles-confirm').addEventListener('click', async () => {
+                const selectedProfiles = Array.from(profileCheckboxes)
+                    .filter(cb => cb.checked)
+                    .map(cb => cb.value);
+                
+                if (selectedProfiles.length > 0) {
+                    // Enable node in selected profiles
+                    for (const profileName of selectedProfiles) {
+                        const profile = this.profiles[profileName];
+                        if (profile) {
+                            if (!profile.enabled) profile.enabled = [];
+                            if (!profile.enabled.includes(nodeFolderName)) {
+                                profile.enabled.push(nodeFolderName);
+                            }
+                            // Remove from disabled if present
+                            if (profile.disabled) {
+                                profile.disabled = profile.disabled.filter(n => n !== nodeFolderName);
+                            }
+                        }
+                    }
+                    
+                    // Save profiles
+                    try {
+                        for (const profileName of selectedProfiles) {
+                            await fetch(`${this.apiBase}/api/profiles/save`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    name: profileName,
+                                    profile: this.profiles[profileName]
+                                })
+                            });
+                        }
+                        this.showToast('success', `Enabled in ${selectedProfiles.length} profile(s)`);
+                        this.log(`Enabled ${nodeFolderName} in: ${selectedProfiles.join(', ')}`, 'success');
+                    } catch (error) {
+                        this.showToast('error', 'Failed to update profiles');
+                    }
+                }
+                
+                modal.remove();
+                resolve();
+            });
+            
+            // Handle close/skip
+            modal.querySelector('.modal-close')?.addEventListener('click', () => {
+                modal.remove();
+                resolve();
+            });
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                    resolve();
+                }
+            });
+        });
+    }
+    
+    async launchDefaultProfile() {
+        // Find the default profile
+        const defaultProfile = Object.entries(this.profiles).find(([name, profile]) => profile.is_default);
+        
+        if (defaultProfile) {
+            await this.launchProfile(defaultProfile[0]);
+        } else {
+            // No default profile, just launch with first profile or no profile
+            const firstProfile = Object.keys(this.profiles)[0];
+            if (firstProfile) {
+                await this.launchProfile(firstProfile);
+            } else {
+                this.showToast('error', 'No profiles available to launch');
+            }
+        }
+    }
+    
     async setDefaultProfile(profileName) {
+        this.log(`Setting default profile: ${profileName}`, 'info');
         try {
             const response = await fetch(`${this.apiBase}/api/profiles/set-default`, {
                 method: 'POST',
@@ -1057,13 +1319,16 @@ class MFConductor {
             const data = await response.json();
             
             if (data.success) {
+                this.log(`Default profile set to: ${profileName}`, 'success');
                 this.showToast('success', `${profileName} set as default`);
                 await this.loadProfiles();
                 this.renderProfilesGrid();
             } else {
+                this.log(`Failed to set default profile: ${data.message}`, 'error');
                 this.showToast('error', data.message);
             }
         } catch (error) {
+            this.log(`Error setting default profile: ${error.message}`, 'error');
             this.showToast('error', 'Failed to set default profile');
         }
     }
@@ -1697,11 +1962,14 @@ class MFConductor {
             const data = await response.json();
             
             if (data.success) {
+                const action = isEditing ? 'Updated' : 'Created';
+                this.log(`${action} profile: "${name}" (${enabled.length} enabled, ${disabled.length} disabled)`, 'success');
                 this.showToast('success', `Profile "${name}" saved`);
                 this.closeProfileEditor();
                 await this.loadProfiles();
                 this.renderProfilesGrid();
             } else {
+                this.log(`Failed to save profile: ${data.message}`, 'error');
                 this.showToast('error', data.message);
             }
         } catch (error) {
@@ -1743,12 +2011,935 @@ class MFConductor {
         }
     }
     
+    // ==================== FILE BROWSER ====================
+    
+    async loadFilesTab() {
+        const container = document.getElementById('files-grid');
+        const countEl = document.getElementById('files-count');
+        const sizeEl = document.getElementById('files-size');
+        const pathEl = document.getElementById('files-current-path');
+        
+        if (!container) return;
+        
+        // Show loading state
+        container.innerHTML = `
+            <div class="loading-state flex flex-col items-center justify-center py-20 col-span-full">
+                <div class="loader mb-4"></div>
+                <p class="text-slate-400">Loading files...</p>
+            </div>
+        `;
+        
+        try {
+            // Only request workflow data when in workflow view mode (for performance)
+            const needWorkflow = this.filesViewMode === 'workflow' && this.filesFolder === 'output';
+            const params = new URLSearchParams({
+                folder: this.filesFolder,
+                subfolder: this.filesSubfolder,
+                sort: this.filesSortBy,
+                dir: this.filesSortDir,
+                type: this.filesTypeFilter,
+                search: this.filesSearch,
+                recursive: this.filesRecursive,
+                with_workflow: needWorkflow ? 'true' : 'false'
+            });
+            
+            const response = await fetch(`${this.apiBase}/api/files?${params}`);
+            const data = await response.json();
+            
+            if (!data.success) {
+                throw new Error(data.message);
+            }
+            
+            this.filesData = data.files || [];
+            
+            // Update stats
+            if (countEl) countEl.textContent = `${data.total} files`;
+            if (sizeEl) sizeEl.textContent = this.formatBytes(data.total_size);
+            if (pathEl) {
+                let folderName;
+                if (this.filesFolder === 'both') {
+                    folderName = 'All Files';
+                } else {
+                    folderName = this.filesFolder.charAt(0).toUpperCase() + this.filesFolder.slice(1);
+                }
+                
+                if (this.filesSubfolder && !this.filesRecursive) {
+                    pathEl.textContent = `${folderName} / ${this.filesSubfolder}`;
+                } else {
+                    pathEl.textContent = folderName;
+                }
+            }
+            
+            // Handle workflow view visibility
+            const workflowBtn = document.getElementById('files-view-workflow');
+            if (workflowBtn) {
+                if (this.filesFolder === 'output') {
+                    workflowBtn.style.display = 'flex';
+                } else {
+                    workflowBtn.style.display = 'none';
+                    // Force switch out of workflow mode if not in output
+                    if (this.filesViewMode === 'workflow') {
+                        this.filesViewMode = 'grid';
+                        this.saveUserPreferences();
+                        this.updateViewToggleButtons();
+                    }
+                }
+            }
+            
+            this.renderFilesGrid();
+            
+        } catch (error) {
+            console.error('Error loading files:', error);
+            container.innerHTML = `
+                <div class="files-empty col-span-full">
+                    <i class="fa-solid fa-exclamation-triangle text-amber-500"></i>
+                    <h3>Error Loading Files</h3>
+                    <p>${this.escapeHtml(error.message)}</p>
+                </div>
+            `;
+        }
+    }
+    
+    renderFilesGrid() {
+        const container = document.getElementById('files-grid');
+        if (!container) return;
+        
+        if (this.filesData.length === 0 && !this.filesSubfolder) {
+            container.innerHTML = `
+                <div class="files-empty col-span-full">
+                    <i class="fa-solid fa-folder-open"></i>
+                    <h3>No Files Found</h3>
+                    <p>This folder is empty or no files match your filters.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // Handle workflow grouping view
+        if (this.filesViewMode === 'workflow') {
+            this.renderWorkflowGroups(container);
+            return;
+        }
+        
+        // Apply view mode
+        container.className = this.filesViewMode === 'list' ? 'files-grid list-view' : 'files-grid';
+        
+        let html = '';
+        
+        // Add column headers for list view
+        if (this.filesViewMode === 'list') {
+            const sortIcon = (field) => {
+                if (this.filesSortBy !== field) return '';
+                return this.filesSortDir === 'desc' 
+                    ? '<i class="fa-solid fa-caret-down sort-icon"></i>' 
+                    : '<i class="fa-solid fa-caret-up sort-icon"></i>';
+            };
+            const activeClass = (field) => this.filesSortBy === field ? 'active' : '';
+            
+            html += `
+                <div class="files-header">
+                    <span class="header-thumb"></span>
+                    <span class="header-name sortable ${activeClass('name')}" data-sort="name">Name ${sortIcon('name')}</span>
+                    <span class="header-date sortable ${activeClass('date')}" data-sort="date">Date ${sortIcon('date')}</span>
+                    <span class="header-size sortable ${activeClass('size')}" data-sort="size">Size ${sortIcon('size')}</span>
+                    <span class="header-workflow sortable ${activeClass('workflow')}" data-sort="workflow">Workflow ${sortIcon('workflow')}</span>
+                    <span class="header-actions"></span>
+                </div>
+            `;
+        }
+        
+        // Add back button if in subfolder (not in recursive mode)
+        if (this.filesSubfolder && !this.filesRecursive) {
+            html += `
+                <div class="file-tile back-button" data-path=".." data-is-dir="true">
+                    <div class="file-thumbnail">
+                        <i class="fa-solid fa-arrow-left file-icon"></i>
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name">.. (Back)</div>
+                        <div class="file-meta">
+                            <span class="file-date">-</span>
+                            <span class="file-size">-</span>
+                            <span class="file-workflow">-</span>
+                        </div>
+                    </div>
+                    <div class="file-actions"></div>
+                </div>
+            `;
+        }
+        
+        html += this.filesData.map(file => this.buildFileTile(file)).join('');
+        container.innerHTML = html;
+        
+        // Bind click handlers
+        container.querySelectorAll('.file-tile').forEach(tile => {
+            tile.addEventListener('click', (e) => {
+                // Ignore if clicking on action buttons
+                if (e.target.closest('.file-action-btn')) return;
+                
+                const filePath = tile.dataset.path;
+                const isDir = tile.dataset.isDir === 'true';
+                
+                if (isDir && !this.filesRecursive) {
+                    this.navigateToFolder(filePath);
+                } else if (!isDir) {
+                    this.previewFile(filePath);
+                }
+            });
+            
+            tile.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                this.showFileContextMenu(e, tile.dataset.path, tile.dataset.name);
+            });
+        });
+        
+        // Bind load workflow buttons
+        container.querySelectorAll('.load-workflow-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                
+                // Check if ComfyUI is running
+                if (btn.dataset.comfyReady !== 'true') {
+                    const shouldLaunch = await this.showConfirm({
+                        title: 'ComfyUI Not Running',
+                        message: 'Loading a workflow requires ComfyUI to be running. Would you like to launch ComfyUI with your default profile?',
+                        type: 'info',
+                        confirmText: 'Launch ComfyUI',
+                        cancelText: 'Cancel'
+                    });
+                    
+                    if (shouldLaunch) {
+                        // Store the workflow path to load after ComfyUI starts
+                        this.pendingWorkflowPath = btn.dataset.path;
+                        await this.launchDefaultProfile();
+                    }
+                    return;
+                }
+                
+                this.loadWorkflowFromFile(btn.dataset.path);
+            });
+        });
+        
+        // Bind sortable headers
+        container.querySelectorAll('.files-header .sortable').forEach(header => {
+            header.addEventListener('click', () => {
+                const sortField = header.dataset.sort;
+                if (this.filesSortBy === sortField) {
+                    // Toggle direction
+                    this.filesSortDir = this.filesSortDir === 'desc' ? 'asc' : 'desc';
+                } else {
+                    // New sort field, default to desc
+                    this.filesSortBy = sortField;
+                    this.filesSortDir = 'desc';
+                }
+                // Update sort select if it exists
+                const sortSelect = document.getElementById('files-sort');
+                if (sortSelect) sortSelect.value = sortField;
+                
+                this.loadFilesTab();
+                this.saveUserPreferences();
+            });
+        });
+    }
+    
+    renderWorkflowGroups(container) {
+        container.className = 'workflow-view-container';
+        
+        // Group files by workflow
+        const workflowGroups = {};
+        const filesOnly = this.filesData.filter(f => !f.is_dir);
+        
+        filesOnly.forEach(file => {
+            const workflowName = file.workflow || 'No Workflow';
+            if (!workflowGroups[workflowName]) {
+                workflowGroups[workflowName] = [];
+            }
+            workflowGroups[workflowName].push(file);
+        });
+        
+        // Sort workflow names
+        const sortedWorkflows = Object.keys(workflowGroups).sort((a, b) => {
+            if (a === 'No Workflow') return 1;
+            if (b === 'No Workflow') return -1;
+            return a.localeCompare(b);
+        });
+        
+        if (sortedWorkflows.length === 0) {
+            container.innerHTML = `
+                <div class="files-empty col-span-full">
+                    <i class="fa-solid fa-sitemap"></i>
+                    <h3>No Files Found</h3>
+                    <p>No files with workflow metadata found.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        let html = '<div class="workflow-list">';
+        
+        sortedWorkflows.forEach(workflowName => {
+            const files = workflowGroups[workflowName];
+            const fileCount = files.length;
+            
+            html += `
+                <div class="workflow-group">
+                    <div class="workflow-header">
+                        <i class="fa-solid fa-chevron-right toggle-icon"></i>
+                        <div class="workflow-name">${this.escapeHtml(workflowName)}</div>
+                        <div class="workflow-count">${fileCount} file${fileCount !== 1 ? 's' : ''}</div>
+                    </div>
+                    <div class="workflow-content">
+                        <div class="files-grid">
+                            ${files.map(file => this.buildFileTile(file)).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        
+        container.innerHTML = html;
+        
+        // Bind toggle handlers
+        container.querySelectorAll('.workflow-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const group = header.closest('.workflow-group');
+                group.classList.toggle('expanded');
+            });
+        });
+        
+        // Bind click handlers for file tiles
+        container.querySelectorAll('.file-tile').forEach(tile => {
+            tile.addEventListener('click', (e) => {
+                // Ignore if clicking on action buttons
+                if (e.target.closest('.file-action-btn')) return;
+                
+                const filePath = tile.dataset.path;
+                const isDir = tile.dataset.isDir === 'true';
+                
+                if (isDir && !this.filesRecursive) {
+                    this.navigateToFolder(filePath);
+                } else if (!isDir) {
+                    this.previewFile(filePath);
+                }
+            });
+            
+            tile.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                this.showFileContextMenu(e, tile.dataset.path, tile.dataset.name);
+            });
+        });
+        
+        // Bind load workflow buttons
+        container.querySelectorAll('.load-workflow-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                
+                // Check if ComfyUI is running
+                if (btn.dataset.comfyReady !== 'true') {
+                    const shouldLaunch = await this.showConfirm({
+                        title: 'ComfyUI Not Running',
+                        message: 'Loading a workflow requires ComfyUI to be running. Would you like to launch ComfyUI with your default profile?',
+                        type: 'info',
+                        confirmText: 'Launch ComfyUI',
+                        cancelText: 'Cancel'
+                    });
+                    
+                    if (shouldLaunch) {
+                        // Store the workflow path to load after ComfyUI starts
+                        this.pendingWorkflowPath = btn.dataset.path;
+                        await this.launchDefaultProfile();
+                    }
+                    return;
+                }
+                
+                this.loadWorkflowFromFile(btn.dataset.path);
+            });
+        });
+    }
+    
+    buildFileTile(file) {
+        const isImage = file.type === 'image';
+        const isVideo = file.type === 'video';
+        const isAudio = file.type === 'audio';
+        const isFolder = file.is_dir;
+        const hasWorkflow = !isFolder && file.workflow && file.workflow !== 'none' && file.workflow !== 'No Workflow';
+        
+        let thumbnailContent = '';
+        
+        if (isFolder) {
+            thumbnailContent = `<i class="fa-solid fa-folder file-icon folder-icon"></i>`;
+        } else if (isImage) {
+            const thumbUrl = `${this.apiBase}/api/files/thumbnail/${this.filesFolder}/${file.path}`;
+            thumbnailContent = `<img src="${thumbUrl}" alt="${this.escapeHtml(file.name)}" loading="lazy" onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\\'fa-solid fa-image file-icon\\'></i>';">`;
+        } else if (isVideo) {
+            thumbnailContent = `
+                <i class="fa-solid fa-film file-icon video-icon"></i>
+                <span class="file-type-badge">${file.extension?.substring(1) || 'vid'}</span>
+            `;
+        } else if (isAudio) {
+            thumbnailContent = `
+                <i class="fa-solid fa-music file-icon audio-icon"></i>
+                <span class="file-type-badge">${file.extension?.substring(1) || 'aud'}</span>
+            `;
+        } else {
+            const iconMap = {
+                '.json': 'fa-solid fa-code json-icon',
+                '.txt': 'fa-solid fa-file-lines text-icon',
+                '.py': 'fa-brands fa-python python-icon',
+                '.js': 'fa-brands fa-js js-icon',
+                '.safetensors': 'fa-solid fa-cube model-icon',
+                '.ckpt': 'fa-solid fa-cube model-icon',
+                '.pt': 'fa-solid fa-cube model-icon',
+            };
+            const iconClass = iconMap[file.extension] || 'fa-solid fa-file';
+            thumbnailContent = `<i class="${iconClass} file-icon"></i>`;
+        }
+        
+        const dateStr = file.modified ? new Date(file.modified * 1000).toLocaleDateString() : '-';
+        const sizeStr = isFolder ? '-' : this.formatBytes(file.size || 0);
+        const workflowStr = isFolder ? '-' : (file.workflow || '-');
+        
+        // Load workflow button for PNG files (they can all have workflows)
+        const isPng = file.extension?.toLowerCase() === '.png';
+        const canHaveWorkflow = isPng && !isFolder;
+        const isComfyRunning = this.comfyServerReady;
+        const loadWorkflowBtn = canHaveWorkflow ? `
+            <button class="file-action-btn load-workflow-btn ${!isComfyRunning ? 'disabled' : ''} ${hasWorkflow ? 'has-workflow' : ''}" 
+                    data-path="${this.escapeHtml(file.path)}" 
+                    data-comfy-ready="${isComfyRunning}"
+                    title="${hasWorkflow ? (isComfyRunning ? 'Load Workflow in ComfyUI' : 'ComfyUI not running') : 'Try to load workflow'}">
+                <i class="fa-solid fa-diagram-project"></i>
+            </button>
+        ` : '';
+        
+        return `
+            <div class="file-tile ${isFolder ? 'is-folder' : ''}" data-path="${this.escapeHtml(file.path)}" data-name="${this.escapeHtml(file.name)}" data-is-dir="${file.is_dir}" data-workflow="${hasWorkflow}">
+                <div class="file-thumbnail">
+                    ${thumbnailContent}
+                </div>
+                <div class="file-info">
+                    <div class="file-name" title="${this.escapeHtml(file.name)}">${this.escapeHtml(file.name)}</div>
+                    <div class="file-meta">
+                        <span class="file-date">${dateStr}</span>
+                        <span class="file-size">${sizeStr}</span>
+                        <span class="file-workflow ${hasWorkflow ? 'has-workflow' : ''}">${this.escapeHtml(workflowStr)}</span>
+                    </div>
+                </div>
+                <div class="file-actions">
+                    ${loadWorkflowBtn}
+                </div>
+            </div>
+        `;
+    }
+    
+    navigateToFolder(folderPath) {
+        if (folderPath === '..') {
+            // Go up one level
+            const parts = this.filesSubfolder.split('/').filter(p => p);
+            parts.pop();
+            this.filesSubfolder = parts.join('/');
+        } else {
+            this.filesSubfolder = folderPath;
+        }
+        this.loadFilesTab();
+    }
+    
+    async handlePreviewWorkflowClick(filePath) {
+        // Close the preview modal
+        document.querySelector('.file-preview-modal')?.remove();
+        
+        // Check if ComfyUI is running
+        if (!this.comfyServerReady) {
+            const shouldLaunch = await this.showConfirm({
+                title: 'ComfyUI Not Running',
+                message: 'Loading a workflow requires ComfyUI to be running. Would you like to launch ComfyUI with your default profile?',
+                type: 'info',
+                confirmText: 'Launch ComfyUI',
+                cancelText: 'Cancel'
+            });
+            
+            if (shouldLaunch) {
+                this.pendingWorkflowPath = filePath;
+                await this.launchDefaultProfile();
+            }
+            return;
+        }
+        
+        this.loadWorkflowFromFile(filePath);
+    }
+    
+    async loadWorkflowFromFile(filePath) {
+        try {
+            this.log(`Loading workflow from ${filePath}...`, 'info');
+            
+            // Get workflow data from the image
+            const response = await fetch(`${this.apiBase}/api/files/workflow/${this.filesFolder}/${filePath}`);
+            const data = await response.json();
+            
+            if (!data.success) {
+                this.showToast('error', data.message || 'Failed to load workflow');
+                this.log(`Failed to load workflow: ${data.message}`, 'error');
+                return;
+            }
+            
+            // Check if ComfyUI is running
+            if (!this.comfyServerReady) {
+                this.showToast('warning', 'ComfyUI is not running. Start it first to load workflows.');
+                return;
+            }
+            
+            // Load workflow into ComfyUI via its API
+            const comfyUrl = this.settings.comfyUrl || 'http://127.0.0.1:8188';
+            
+            // ComfyUI expects workflow to be loaded via the graph API
+            // We'll open ComfyUI with the workflow in localStorage, then redirect
+            localStorage.setItem('mfconductor_pending_workflow', JSON.stringify(data.workflow));
+            
+            // Open ComfyUI
+            window.open(comfyUrl, '_blank');
+            
+            this.showToast('success', 'Workflow loaded! Opening ComfyUI...');
+            this.log('Workflow loaded and ComfyUI opened', 'success');
+            
+            // Note: To fully integrate, ComfyUI would need to check for this localStorage item
+            // Alternative: Use ComfyUI's /api endpoint if available
+        } catch (error) {
+            this.showToast('error', 'Failed to load workflow');
+            this.log(`Error loading workflow: ${error.message}`, 'error');
+        }
+    }
+    
+    async previewFile(filePath) {
+        const file = this.filesData.find(f => f.path === filePath);
+        if (!file) return;
+        
+        if (file.type !== 'image' && file.type !== 'video') {
+            // Open in explorer for non-previewable files
+            this.openFileLocation(filePath);
+            return;
+        }
+        
+        // Get navigable files (images and videos only)
+        const mediaFiles = this.filesData.filter(f => !f.is_dir && (f.type === 'image' || f.type === 'video'));
+        const currentIndex = mediaFiles.findIndex(f => f.path === filePath);
+        
+        // Store for navigation
+        this.previewMediaFiles = mediaFiles;
+        this.previewCurrentIndex = currentIndex;
+        
+        this.showPreviewModal(file);
+    }
+    
+    showPreviewModal(file) {
+        // Remove existing modal
+        document.querySelector('.file-preview-modal')?.remove();
+        
+        const filePath = file.path;
+        const isPng = file.extension?.toLowerCase() === '.png';
+        const hasDetectedWorkflow = file.workflow && file.workflow !== '-' && file.workflow !== 'No Workflow';
+        
+        // All PNGs can potentially have workflows
+        const canHaveWorkflow = isPng;
+        
+        const hasPrev = this.previewCurrentIndex > 0;
+        const hasNext = this.previewCurrentIndex < this.previewMediaFiles.length - 1;
+        
+        const modal = document.createElement('div');
+        modal.className = 'file-preview-modal';
+        modal.innerHTML = `
+            ${hasPrev ? `
+                <button class="file-preview-nav prev" title="Previous (←)">
+                    <i class="fa-solid fa-chevron-left"></i>
+                </button>
+            ` : ''}
+            ${hasNext ? `
+                <button class="file-preview-nav next" title="Next (→)">
+                    <i class="fa-solid fa-chevron-right"></i>
+                </button>
+            ` : ''}
+            <button class="file-preview-close" title="Close (Esc)">
+                <i class="fa-solid fa-times"></i>
+            </button>
+            <div class="file-preview-content">
+                ${file.type === 'image' 
+                    ? `<img src="${this.apiBase}/api/files/thumbnail/${this.filesFolder}/${filePath}" alt="${this.escapeHtml(file.name)}">`
+                    : `<video src="${this.apiBase}/api/files/serve/${this.filesFolder}/${filePath}" controls autoplay></video>`
+                }
+                <div class="file-preview-info">
+                    <span class="preview-filename">${this.escapeHtml(file.name)}</span>
+                    <span class="preview-meta">
+                        <span>${this.formatBytes(file.size)}</span>
+                        <span class="preview-counter">${this.previewCurrentIndex + 1} / ${this.previewMediaFiles.length}</span>
+                        ${hasDetectedWorkflow ? `<span class="preview-workflow">${this.escapeHtml(file.workflow)}</span>` : ''}
+                    </span>
+                    <div class="file-preview-actions">
+                        ${canHaveWorkflow ? `
+                            <button class="btn btn-sm ${this.comfyServerReady ? 'btn-success' : 'btn-glass'}" 
+                                    id="preview-open-workflow"
+                                    data-path="${this.escapeHtml(filePath)}"
+                                    title="${this.comfyServerReady ? 'Load workflow in ComfyUI' : 'ComfyUI not running'}">
+                                <i class="fa-solid fa-diagram-project"></i> Open Workflow
+                            </button>
+                        ` : ''}
+                        <button class="btn btn-sm btn-glass" id="preview-open-location" data-path="${this.escapeHtml(filePath)}">
+                            <i class="fa-solid fa-folder-open"></i> Open Location
+                        </button>
+                        <button class="btn btn-sm btn-danger" id="preview-delete" data-path="${this.escapeHtml(filePath)}" data-name="${this.escapeHtml(file.name)}">
+                            <i class="fa-solid fa-trash"></i> Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Bind navigation
+        const prevBtn = modal.querySelector('.file-preview-nav.prev');
+        const nextBtn = modal.querySelector('.file-preview-nav.next');
+        
+        if (prevBtn) {
+            prevBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.navigatePreview(-1);
+            });
+        }
+        
+        if (nextBtn) {
+            nextBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.navigatePreview(1);
+            });
+        }
+        
+        // Bind action buttons
+        const workflowBtn = modal.querySelector('#preview-open-workflow');
+        if (workflowBtn) {
+            workflowBtn.addEventListener('click', () => {
+                this.handlePreviewWorkflowClick(workflowBtn.dataset.path);
+            });
+        }
+        
+        const openLocationBtn = modal.querySelector('#preview-open-location');
+        if (openLocationBtn) {
+            openLocationBtn.addEventListener('click', () => {
+                this.openFileLocation(openLocationBtn.dataset.path);
+            });
+        }
+        
+        const deleteBtn = modal.querySelector('#preview-delete');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', () => {
+                this.deleteFileWithConfirm(deleteBtn.dataset.path, deleteBtn.dataset.name);
+            });
+        }
+        
+        // Close handlers
+        modal.querySelector('.file-preview-close').addEventListener('click', () => this.closePreviewModal());
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) this.closePreviewModal();
+        });
+        
+        // Keyboard handler
+        this.previewKeyHandler = (e) => {
+            if (e.key === 'Escape') {
+                this.closePreviewModal();
+            } else if (e.key === 'ArrowLeft' && hasPrev) {
+                this.navigatePreview(-1);
+            } else if (e.key === 'ArrowRight' && hasNext) {
+                this.navigatePreview(1);
+            }
+        };
+        document.addEventListener('keydown', this.previewKeyHandler);
+    }
+    
+    navigatePreview(direction) {
+        const newIndex = this.previewCurrentIndex + direction;
+        if (newIndex >= 0 && newIndex < this.previewMediaFiles.length) {
+            this.previewCurrentIndex = newIndex;
+            const newFile = this.previewMediaFiles[newIndex];
+            this.showPreviewModal(newFile);
+        }
+    }
+    
+    closePreviewModal() {
+        document.querySelector('.file-preview-modal')?.remove();
+        if (this.previewKeyHandler) {
+            document.removeEventListener('keydown', this.previewKeyHandler);
+            this.previewKeyHandler = null;
+        }
+    }
+    
+    showFileContextMenu(event, filePath, fileName) {
+        // Remove any existing context menu
+        document.querySelectorAll('.file-context-menu').forEach(m => m.remove());
+        
+        const menu = document.createElement('div');
+        menu.className = 'file-context-menu absolute bg-card border border-border-subtle rounded-lg shadow-xl py-1 z-50';
+        menu.style.left = `${event.clientX}px`;
+        menu.style.top = `${event.clientY}px`;
+        menu.innerHTML = `
+            <button class="w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-white/10 flex items-center gap-2" data-action="open">
+                <i class="fa-solid fa-folder-open w-4"></i> Open Location
+            </button>
+            <button class="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-white/10 flex items-center gap-2" data-action="delete">
+                <i class="fa-solid fa-trash w-4"></i> Delete
+            </button>
+        `;
+        
+        document.body.appendChild(menu);
+        
+        menu.querySelector('[data-action="open"]').addEventListener('click', () => {
+            this.openFileLocation(filePath);
+            menu.remove();
+        });
+        
+        menu.querySelector('[data-action="delete"]').addEventListener('click', () => {
+            this.deleteFileWithConfirm(filePath, fileName);
+            menu.remove();
+        });
+        
+        // Close on click outside
+        setTimeout(() => {
+            document.addEventListener('click', function closeMenu(e) {
+                if (!menu.contains(e.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                }
+            });
+        }, 0);
+    }
+    
+    async openFileLocation(filePath = '') {
+        try {
+            const response = await fetch(`${this.apiBase}/api/files/open-location`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    folder: this.filesFolder,
+                    path: filePath
+                })
+            });
+            const data = await response.json();
+            if (!data.success) {
+                this.showToast('error', data.message);
+            }
+        } catch (error) {
+            this.showToast('error', 'Failed to open folder');
+        }
+    }
+    
+    async deleteFileWithConfirm(filePath, fileName) {
+        // Close preview modal if open
+        document.querySelectorAll('.file-preview-modal').forEach(m => m.remove());
+        
+        const confirmed = await this.showConfirm({
+            title: 'Delete File?',
+            message: `Are you sure you want to delete "${fileName}"? This cannot be undone.`,
+            type: 'danger',
+            confirmText: 'Delete'
+        });
+        
+        if (!confirmed) return;
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/files/delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    folder: this.filesFolder,
+                    path: filePath
+                })
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                this.showToast('success', `Deleted: ${fileName}`);
+                this.log(`Deleted file: ${fileName}`, 'success');
+                await this.loadFilesTab();
+            } else {
+                this.showToast('error', data.message);
+            }
+        } catch (error) {
+            this.showToast('error', 'Failed to delete file');
+        }
+    }
+    
+    applyFilesPreferences() {
+        // Apply folder button state
+        document.querySelectorAll('.folder-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.folder === this.filesFolder);
+        });
+        
+        // Apply recursive button state
+        const recursiveBtn = document.getElementById('files-recursive-btn');
+        if (recursiveBtn) {
+            recursiveBtn.classList.toggle('active', this.filesRecursive);
+        }
+        
+        // Apply view mode
+        this.updateViewToggleButtons();
+        
+        // Apply sort select
+        const sortSelect = document.getElementById('files-sort');
+        if (sortSelect) {
+            sortSelect.value = this.filesSortBy;
+        }
+        
+        // Apply sort direction icon
+        const sortDirBtn = document.getElementById('files-sort-dir');
+        if (sortDirBtn) {
+            const icon = sortDirBtn.querySelector('i');
+            if (icon) {
+                icon.className = this.filesSortDir === 'desc' 
+                    ? 'fa-solid fa-arrow-down-short-wide' 
+                    : 'fa-solid fa-arrow-up-short-wide';
+            }
+        }
+    }
+    
+    updateViewToggleButtons() {
+        const gridViewBtn = document.getElementById('files-view-grid');
+        const listViewBtn = document.getElementById('files-view-list');
+        const workflowViewBtn = document.getElementById('files-view-workflow');
+        
+        [gridViewBtn, listViewBtn, workflowViewBtn].forEach(btn => {
+            if (btn) {
+                 btn.classList.remove('active', 'bg-accent-primary', 'text-white');
+            }
+        });
+        
+        if (this.filesViewMode === 'grid' && gridViewBtn) gridViewBtn.classList.add('active', 'bg-accent-primary', 'text-white');
+        if (this.filesViewMode === 'list' && listViewBtn) listViewBtn.classList.add('active', 'bg-accent-primary', 'text-white');
+        if (this.filesViewMode === 'workflow' && workflowViewBtn) workflowViewBtn.classList.add('active', 'bg-accent-primary', 'text-white');
+    }
+
+    bindFilesEvents() {
+        // Apply loaded preferences to UI
+        this.applyFilesPreferences();
+        
+        // Folder selector buttons
+        document.querySelectorAll('.folder-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.folder-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.filesFolder = btn.dataset.folder;
+                this.filesSubfolder = '';
+                this.loadFilesTab();
+                this.saveUserPreferences();
+            });
+        });
+        
+        // Recursive toggle
+        const recursiveBtn = document.getElementById('files-recursive-btn');
+        if (recursiveBtn) {
+            recursiveBtn.addEventListener('click', () => {
+                this.filesRecursive = !this.filesRecursive;
+                recursiveBtn.classList.toggle('active', this.filesRecursive);
+                this.filesSubfolder = ''; // Reset subfolder when toggling
+                this.loadFilesTab();
+                this.saveUserPreferences();
+            });
+        }
+        
+        // Search
+        const searchInput = document.getElementById('files-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', debounce(() => {
+                this.filesSearch = searchInput.value;
+                this.loadFilesTab();
+            }, 300));
+        }
+        
+        // Sort
+        const sortSelect = document.getElementById('files-sort');
+        if (sortSelect) {
+            sortSelect.addEventListener('change', () => {
+                this.filesSortBy = sortSelect.value;
+                this.loadFilesTab();
+                this.saveUserPreferences();
+            });
+        }
+        
+        // Sort direction
+        const sortDirBtn = document.getElementById('files-sort-dir');
+        if (sortDirBtn) {
+            sortDirBtn.addEventListener('click', () => {
+                this.filesSortDir = this.filesSortDir === 'desc' ? 'asc' : 'desc';
+                const icon = sortDirBtn.querySelector('i');
+                if (icon) {
+                    icon.className = this.filesSortDir === 'desc' 
+                        ? 'fa-solid fa-arrow-down-short-wide' 
+                        : 'fa-solid fa-arrow-up-short-wide';
+                }
+                this.loadFilesTab();
+                this.saveUserPreferences();
+            });
+        }
+        
+        // Type filter
+        const typeFilter = document.getElementById('files-type-filter');
+        if (typeFilter) {
+            typeFilter.addEventListener('change', () => {
+                this.filesTypeFilter = typeFilter.value;
+                this.loadFilesTab();
+            });
+        }
+        
+        // View toggle
+        const gridViewBtn = document.getElementById('files-view-grid');
+        const listViewBtn = document.getElementById('files-view-list');
+        const workflowViewBtn = document.getElementById('files-view-workflow');
+        
+        if (gridViewBtn) {
+            gridViewBtn.addEventListener('click', () => {
+                this.filesViewMode = 'grid';
+                this.updateViewToggleButtons();
+                this.renderFilesGrid();
+                this.saveUserPreferences();
+            });
+        }
+        
+        if (listViewBtn) {
+            listViewBtn.addEventListener('click', () => {
+                this.filesViewMode = 'list';
+                this.updateViewToggleButtons();
+                this.renderFilesGrid();
+                this.saveUserPreferences();
+            });
+        }
+        
+        if (workflowViewBtn) {
+            workflowViewBtn.addEventListener('click', () => {
+                this.filesViewMode = this.filesViewMode === 'workflow' ? 'grid' : 'workflow';
+                this.updateViewToggleButtons();
+                this.renderFilesGrid();
+                this.saveUserPreferences();
+            });
+        }
+        
+        // Refresh
+        const refreshBtn = document.getElementById('files-refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => this.loadFilesTab());
+        }
+        
+        // Open folder
+        const openFolderBtn = document.getElementById('files-open-folder-btn');
+        if (openFolderBtn) {
+            openFolderBtn.addEventListener('click', () => this.openFileLocation());
+        }
+    }
+    
     // Packages Tab
     async loadPackagesTab() {
         const container = document.getElementById('packages-tab-list');
         const statsEl = document.getElementById('packages-tab-stats');
         if (!container) return;
         
+        this.log('Loading installed packages...', 'info');
         container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>Loading packages...</p></div>';
         
         try {
@@ -1767,10 +2958,13 @@ class MFConductor {
                 this.packagesShowOutdated = false;
                 this.renderPackagesTab();
                 this.updatePackagesStats();
+                this.log(`Loaded ${this.installedPackages.length} installed package${this.installedPackages.length !== 1 ? 's' : ''}`, 'success');
             } else {
+                this.log('Could not load packages', 'error');
                 container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);">Could not load packages</div>';
             }
         } catch (error) {
+            this.log(`Error loading packages: ${error.message}`, 'error');
             console.error('Error loading packages:', error);
             container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted);">Error: ${this.escapeHtml(error.message)}</div>`;
         }
@@ -1868,25 +3062,20 @@ class MFConductor {
                         </div>
                     </div>
                     <div class="package-actions">
-                        <button class="btn btn-secondary btn-sm package-check-btn" onclick="app.checkSinglePackageUpdate('${this.escapeHtml(pkg.name)}')" title="Check for updates">
-                            <i class="fa-solid fa-clock-rotate-left"></i>
+                        <button class="btn ${isOutdated ? 'btn-success' : 'btn-primary'} btn-sm package-upgrade-btn" onclick="app.checkAndUpgradePackage('${this.escapeHtml(pkg.name)}')" title="${isOutdated ? `Update available: ${pkg.latestVersion}` : 'Check for updates & upgrade'}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                <path d="M12 19V5M5 12l7-7 7 7"/>
+                            </svg>
+                            ${isOutdated ? 'Update' : 'Upgrade'}
                         </button>
-                        ${isOutdated ? `
-                            <button class="btn btn-success btn-sm" onclick="app.upgradePackage('${this.escapeHtml(pkg.name)}')" title="Upgrade to ${pkg.latestVersion}">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M12 19V5M5 12l7-7 7 7"/>
-                                </svg>
-                                Upgrade
-                            </button>
-                        ` : ''}
-                        <button class="btn btn-secondary btn-sm" onclick="app.reinstallPackage('${this.escapeHtml(pkg.name)}')" title="Reinstall">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <button class="btn btn-secondary btn-sm" onclick="app.reinstallPackage('${this.escapeHtml(pkg.name)}')" title="Reinstall current version">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                 <path d="M23 4v6h-6"/>
                                 <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
                             </svg>
                         </button>
                         <button class="btn btn-danger btn-sm" onclick="app.uninstallPackage('${this.escapeHtml(pkg.name)}')" title="Uninstall">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                 <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                             </svg>
                         </button>
@@ -1907,6 +3096,36 @@ class MFConductor {
         this.log('Checking for package updates... (this may take a while)', 'info');
         
         try {
+            const applyUpdates = (updates = []) => {
+                const updateMap = new Map(
+                    updates.map(update => [String(update.name || '').toLowerCase(), update])
+                );
+                
+                this.installedPackages.forEach(pkg => {
+                    const key = String(pkg.name || '').toLowerCase();
+                    const update = updateMap.get(key);
+                    if (update) {
+                        pkg.hasUpdate = true;
+                        pkg.latestVersion = update.latest_version;
+                    } else {
+                        pkg.hasUpdate = false;
+                        pkg.latestVersion = null;
+                    }
+                });
+                
+                this.renderPackagesTab();
+                this.updatePackagesStats();
+                
+                const count = updates.length;
+                if (count > 0) {
+                    this.log(`Update check complete: ${count} package${count > 1 ? 's' : ''} can be updated`, 'warning');
+                    this.showToast('warning', `${count} package${count > 1 ? 's' : ''} can be updated`);
+                } else {
+                    this.log('Update check complete: All packages are up to date', 'success');
+                    this.showToast('success', 'All packages are up to date');
+                }
+            };
+            
             // Start the check (returns immediately with job_id)
             const startResponse = await fetch(`${this.apiBase}/api/packages/check-updates`, {
                 method: 'POST'
@@ -1914,9 +3133,19 @@ class MFConductor {
             
             const startData = await startResponse.json();
             
-            if (!startData.success || !startData.job_id) {
+            if (!startData.success) {
                 this.log(`Failed to start update check: ${startData.message || 'Unknown error'}`, 'error');
                 this.showToast('error', startData.message || 'Failed to start update check');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check Updates';
+                }
+                return;
+            }
+            
+            // Integrated mode returns results immediately (no job_id)
+            if (!startData.job_id) {
+                applyUpdates(startData.updates || []);
                 if (btn) {
                     btn.disabled = false;
                     btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check Updates';
@@ -1949,26 +3178,7 @@ class MFConductor {
                     clearInterval(pollInterval);
                     
                     if (statusData.success && statusData.updates) {
-                        // Update package info with update status
-                        statusData.updates.forEach(update => {
-                            const pkg = this.installedPackages.find(p => p.name === update.name);
-                            if (pkg) {
-                                pkg.hasUpdate = true;
-                                pkg.latestVersion = update.latest_version;
-                            }
-                        });
-                        
-                        this.renderPackagesTab();
-                        this.updatePackagesStats();
-                        
-                        const count = statusData.updates.length;
-                        if (count > 0) {
-                            this.log(`Update check complete: ${count} package${count > 1 ? 's' : ''} can be updated`, 'warning');
-                            this.showToast('warning', `${count} package${count > 1 ? 's' : ''} can be updated`);
-                        } else {
-                            this.log('Update check complete: All packages are up to date', 'success');
-                            this.showToast('success', 'All packages are up to date');
-                        }
+                        applyUpdates(statusData.updates);
                     } else {
                         this.log(`Update check failed: ${statusData.message || 'Unknown error'}`, 'error');
                         this.showToast('error', statusData.message || 'Failed to check updates');
@@ -2012,6 +3222,97 @@ class MFConductor {
         }
     }
     
+    async checkAndUpgradePackage(packageName) {
+        const item = document.querySelector(`.package-item[data-package="${packageName}"]`);
+        const upgradeBtn = item?.querySelector('.package-upgrade-btn');
+        
+        if (upgradeBtn) {
+            upgradeBtn.disabled = true;
+            upgradeBtn.innerHTML = '<div class="loading-spinner" style="width:12px;height:12px;margin:0;"></div> Checking...';
+        }
+        
+        this.showToast('info', `Checking ${packageName} for updates...`);
+        this.log(`Checking for updates: ${packageName}...`, 'info');
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/packages/check-single`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ package_name: packageName })
+            });
+            
+            const data = await response.json();
+            console.log('Package check response:', data);
+            
+            if (data.success) {
+                const pkg = this.installedPackages.find(p => p.name === packageName);
+                
+                if (data.has_update) {
+                    const versions = data.available_versions || [data.latest_version];
+                    this.log(`${packageName}: ${data.current_version} → ${data.latest_version} (${versions.length} versions available)`, 'warning');
+                    this.showToast('success', `Update found! ${data.current_version} → ${data.latest_version}`);
+                    
+                    if (pkg) {
+                        pkg.hasUpdate = true;
+                        pkg.latestVersion = data.latest_version;
+                        pkg.availableVersions = versions;
+                    }
+                    
+                    // Restore button before showing modal
+                    if (upgradeBtn) {
+                        upgradeBtn.disabled = false;
+                        upgradeBtn.classList.remove('btn-primary');
+                        upgradeBtn.classList.add('btn-success');
+                        upgradeBtn.innerHTML = `
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                <path d="M12 19V5M5 12l7-7 7 7"/>
+                            </svg>
+                            Update
+                        `;
+                    }
+                    
+                    // Prompt for version selection
+                    await this.promptUpgradeVersion(packageName, data.current_version, versions);
+                    this.renderPackagesTab();
+                    this.updatePackagesStats();
+                } else {
+                    if (pkg) pkg.hasUpdate = false;
+                    this.log(`${packageName} is already at the latest version (${data.current_version})`, 'success');
+                    this.showToast('success', `${packageName} is already at the latest version`);
+                    this.renderPackagesTab();
+                    this.updatePackagesStats();
+                }
+            } else {
+                this.log(`Failed to check ${packageName}: ${data.message || 'Unknown error'}`, 'error');
+                this.showToast('error', data.message || `Failed to check ${packageName}`);
+                // Restore button on error
+                if (upgradeBtn) {
+                    upgradeBtn.disabled = false;
+                    upgradeBtn.innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M12 19V5M5 12l7-7 7 7"/>
+                        </svg>
+                        Upgrade
+                    `;
+                }
+            }
+        } catch (error) {
+            console.error('Error checking package:', error);
+            this.log(`Error checking ${packageName}: ${error.message}`, 'error');
+            this.showToast('error', `Failed to check ${packageName}: ${error.message}`);
+            // Restore button on error
+            if (upgradeBtn) {
+                upgradeBtn.disabled = false;
+                upgradeBtn.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <path d="M12 19V5M5 12l7-7 7 7"/>
+                    </svg>
+                    Upgrade
+                `;
+            }
+        }
+    }
+    
     async checkSinglePackageUpdate(packageName) {
         const item = document.querySelector(`.package-item[data-package="${packageName}"]`);
         const checkBtn = item?.querySelector('.package-check-btn');
@@ -2038,8 +3339,18 @@ class MFConductor {
                     if (data.has_update) {
                         pkg.hasUpdate = true;
                         pkg.latestVersion = data.latest_version;
+                        pkg.availableVersions = data.available_versions || [data.latest_version];
                         this.log(`${packageName} has update available: ${data.current_version} → ${data.latest_version}`, 'warning');
-                        this.showToast('warning', `${packageName} has update: ${data.current_version} → ${data.latest_version}`);
+                        this.showToast('info', `Update available for ${packageName}`);
+                        
+                        // Restore button before showing modal
+                        if (checkBtn) {
+                            checkBtn.disabled = false;
+                            checkBtn.innerHTML = '<i class="fa-solid fa-clock-rotate-left"></i>';
+                        }
+                        
+                        // Prompt for version selection
+                        await this.promptUpgradeVersion(packageName, data.current_version, pkg.availableVersions);
                     } else {
                         pkg.hasUpdate = false;
                         this.log(`${packageName} is up to date (${data.current_version})`, 'success');
@@ -2195,24 +3506,122 @@ class MFConductor {
         }
     }
     
-    async upgradePackage(packageName) {
+    async promptUpgradeVersion(packageName, currentVersion, availableVersions) {
+        // If no versions available, show a simple upgrade confirmation
+        if (!availableVersions || availableVersions.length === 0) {
+            const pkg = this.installedPackages.find(p => p.name === packageName);
+            if (pkg && pkg.latestVersion && pkg.latestVersion !== currentVersion) {
+                // There's a latest version but no version list - offer to upgrade to latest
+                const confirmed = await this.showConfirm({
+                    title: `Upgrade ${packageName}?`,
+                    message: `Upgrade from ${currentVersion} to ${pkg.latestVersion}?`,
+                    type: 'info',
+                    confirmText: 'Upgrade',
+                    confirmClass: 'btn-success'
+                });
+                if (confirmed) {
+                    await this.upgradePackage(packageName, pkg.latestVersion);
+                }
+            } else {
+                this.showToast('info', `${packageName} is up to date`);
+            }
+            return;
+        }
+        
+        // Create version options
+        const versionOptions = availableVersions.map((ver, idx) => {
+            const isLatest = idx === 0 ? ' (latest)' : '';
+            return `
+                <label class="version-radio-item">
+                    <input type="radio" name="version" value="${this.escapeHtml(ver)}" ${idx === 0 ? 'checked' : ''}>
+                    <span>${this.escapeHtml(ver)}${isLatest}</span>
+                </label>
+            `;
+        }).join('');
+        
+        // Create and show modal
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h3>Upgrade ${this.escapeHtml(packageName)}</h3>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-slate-400 mb-2">Current version: <strong class="text-white">${this.escapeHtml(currentVersion)}</strong></p>
+                    <p class="text-slate-400 mb-4">Select a version to upgrade to:</p>
+                    
+                    <div class="version-radio-list">
+                        ${versionOptions}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-glass" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+                    <button class="btn btn-success" id="upgrade-version-confirm">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M12 19V5M5 12l7-7 7 7"/>
+                        </svg>
+                        Upgrade
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Add show class after a frame to trigger animation
+        requestAnimationFrame(() => {
+            modal.classList.add('show');
+        });
+        
+        // Handle confirm
+        return new Promise((resolve) => {
+            modal.querySelector('#upgrade-version-confirm').addEventListener('click', async () => {
+                const selectedVersion = modal.querySelector('input[name="version"]:checked')?.value;
+                modal.remove();
+                
+                if (selectedVersion) {
+                    await this.upgradePackage(packageName, selectedVersion);
+                }
+                resolve();
+            });
+            
+            // Handle close
+            modal.querySelector('.modal-close')?.addEventListener('click', () => {
+                modal.remove();
+                resolve();
+            });
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                    resolve();
+                }
+            });
+        });
+    }
+    
+    async upgradePackage(packageName, version = null) {
         const item = document.querySelector(`.package-item[data-package="${packageName}"]`);
         if (item) item.classList.add('updating');
         
-        this.showToast('info', `Upgrading ${packageName}...`);
-        this.log(`pip install --upgrade ${packageName}`, 'info');
+        const versionText = version ? ` to ${version}` : '';
+        this.showToast('info', `Upgrading ${packageName}${versionText}...`);
+        this.log(`pip install --upgrade ${packageName}${version ? `==${version}` : ''}`, 'info');
         
         try {
             const response = await fetch(`${this.apiBase}/api/packages/upgrade`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ package_name: packageName })
+                body: JSON.stringify({ package_name: packageName, version: version })
             });
             
             const data = await response.json();
             
             if (data.success) {
-                this.showToast('success', `Successfully upgraded ${packageName}`);
+                this.showToast('success', data.message || `Successfully upgraded ${packageName}`);
                 this.log(data.message || `Upgraded ${packageName}`, 'success');
                 await this.loadPackagesTab();
             } else {
@@ -2426,14 +3835,27 @@ class MFConductor {
             clearBtn.addEventListener('click', () => this.clearConsole());
         }
         
-        const scrollBtn = document.getElementById('console-scroll-btn');
-        if (scrollBtn) {
-            scrollBtn.addEventListener('click', () => this.toggleConsoleAutoScroll());
+        const scrollCheckbox = document.getElementById('console-autoscroll-checkbox');
+        if (scrollCheckbox) {
+            // Sync initial state
+            scrollCheckbox.checked = this.consoleAutoScroll;
+            scrollCheckbox.addEventListener('change', () => {
+                this.consoleAutoScroll = scrollCheckbox.checked;
+                if (this.consoleAutoScroll) {
+                    this.scrollConsoleToBottom();
+                }
+                this.saveUserPreferences();
+            });
         }
         
         const copyBtn = document.getElementById('console-copy-btn');
         if (copyBtn) {
             copyBtn.addEventListener('click', () => this.copyConsoleOutput());
+        }
+        
+        const exportBtn = document.getElementById('console-export-btn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => this.exportConsoleOutput());
         }
         
         // Command input
@@ -2495,8 +3917,8 @@ class MFConductor {
                 // Transform to "Go To Comfy" mode - server is confirmed ready
                 launchBtn.disabled = false;
                 launchBtn.classList.remove('btn-success');
-                launchBtn.classList.add('btn-primary', 'comfy-ready');
-                launchBtn.title = `Open ComfyUI at localhost:${port}`;
+                launchBtn.classList.add('btn-primary', 'comfy-ready', 'comfy-ready-blink');
+                launchBtn.title = `ComfyUI is ready! Click to open at localhost:${port}`;
                 launchBtn.innerHTML = `
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                         <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
@@ -2506,20 +3928,20 @@ class MFConductor {
                     Go To Comfy
                 `;
             } else {
-                // Normal "Launch ComfyUI" mode
+                // Normal "Launch ComfyUI" mode or "Launching..." mode
                 launchBtn.classList.remove('btn-primary', 'comfy-ready');
                 launchBtn.classList.add('btn-success');
                 launchBtn.innerHTML = `
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                         <polygon points="5 3 19 12 5 21 5 3"/>
                     </svg>
-                    ${isStarting ? 'Starting...' : 'Launch ComfyUI'}
+                    ${isStarting ? 'Launching...' : 'Launch ComfyUI'}
                 `;
                 
                 if (this.defaultProfile) {
                     launchBtn.disabled = isStarting;
                     launchBtn.title = isStarting 
-                        ? 'ComfyUI is starting...' 
+                        ? 'ComfyUI is launching...' 
                         : `Launch ComfyUI with "${this.defaultProfile}" profile`;
                 } else {
                     launchBtn.disabled = true;
@@ -2719,17 +4141,28 @@ class MFConductor {
     
     async launchComfyUI() {
         if (!this.defaultProfile) {
+            this.log('Cannot launch: No default profile set', 'error');
             this.showToast('error', 'Please set a default profile first');
             return;
         }
         
         // Check if already running
         if (this.comfyStatus === 'running' || this.comfyStatus === 'starting') {
+            this.log('ComfyUI is already running', 'warning');
             this.showToast('warning', 'ComfyUI is already running');
             return;
         }
         
+        // Switch to terminal page immediately
+        this.switchMainTab('console');
+        
+        // Clear console and show splash screen (don't await - load in background)
+        this.clearConsoleOutput();
+        this.showSplashScreen(); // Non-blocking
+        
+        // Update button to "Launching..." immediately
         this.updateComfyStatus('starting');
+        this.log(`Launching ComfyUI with profile "${this.defaultProfile}"...`, 'info');
         this.appendToConsole(`Launching ComfyUI with profile "${this.defaultProfile}"...`, 'info');
         
         try {
@@ -2745,8 +4178,8 @@ class MFConductor {
                 this.showToast('success', `Launching ${this.defaultProfile}...`);
                 this.appendToConsole('ComfyUI process started', 'success');
                 this.startConsolePolling();
-                // Switch to console tab to show output
-                this.switchMainTab('console');
+                // Start checking if server is ready
+                this.checkComfyServerReady();
             } else {
                 this.updateComfyStatus('error');
                 this.appendToConsole(`Failed to launch: ${data.message}`, 'error');
@@ -2768,6 +4201,7 @@ class MFConductor {
         });
         if (!confirmed) return;
         
+        this.log('Stopping ComfyUI...', 'info');
         this.appendToConsole('Stopping ComfyUI...', 'info');
         
         try {
@@ -2778,18 +4212,28 @@ class MFConductor {
             const data = await response.json();
             
             if (data.success) {
+                this.log('ComfyUI stopped', 'success');
                 this.updateComfyStatus('stopped');
                 this.appendToConsole('ComfyUI stopped', 'success');
                 this.stopConsolePolling();
+                // Clear server ready check interval
+                if (this.serverReadyCheckInterval) {
+                    clearInterval(this.serverReadyCheckInterval);
+                    this.serverReadyCheckInterval = null;
+                }
+                this.comfyServerReady = false;
             } else {
+                this.log(`Failed to stop ComfyUI: ${data.message}`, 'error');
                 this.appendToConsole(`Failed to stop: ${data.message}`, 'error');
             }
         } catch (error) {
+            this.log(`Error stopping ComfyUI: ${error.message}`, 'error');
             this.appendToConsole(`Error stopping ComfyUI: ${error.message}`, 'error');
         }
     }
     
     async restartComfyUI() {
+        this.log('Restarting ComfyUI...', 'info');
         this.appendToConsole('Restarting ComfyUI...', 'info');
         this.updateComfyStatus('starting');
         
@@ -2801,34 +4245,41 @@ class MFConductor {
             const data = await response.json();
             
             if (data.success) {
+                this.log('ComfyUI restart initiated', 'success');
                 this.appendToConsole('ComfyUI restart initiated', 'success');
             } else {
+                this.log(`Failed to restart ComfyUI: ${data.message}`, 'error');
                 this.updateComfyStatus('error');
                 this.appendToConsole(`Failed to restart: ${data.message}`, 'error');
             }
         } catch (error) {
+            this.log(`Error restarting ComfyUI: ${error.message}`, 'error');
             this.updateComfyStatus('error');
             this.appendToConsole(`Error restarting ComfyUI: ${error.message}`, 'error');
         }
     }
     
     openComfyUI() {
-        if (this.comfyStatus !== 'running' || !this.comfyServerReady) {
-            this.showToast('warning', 'ComfyUI is not ready yet');
-            return;
-        }
-        
+        // Open immediately - don't wait for toast
         const port = this.comfyPort || 8188;
         const url = `http://localhost:${port}`;
+        
+        // Open in new tab immediately
         window.open(url, '_blank');
-        this.showToast('success', `Opening ComfyUI at ${url}`);
+        
+        // Show toast after (non-blocking)
+        if (this.comfyServerReady) {
+            this.showToast('success', `Opening ComfyUI at ${url}`);
+        } else {
+            this.showToast('warning', 'ComfyUI may still be loading...');
+        }
     }
     
     // Console output management
     startConsolePolling() {
         if (this.consolePolling) return;
         
-        this.consolePolling = setInterval(() => this.pollConsoleOutput(), 500);
+        this.consolePolling = setInterval(() => this.pollConsoleOutput(), 2000);
     }
     
     stopConsolePolling() {
@@ -2855,7 +4306,19 @@ class MFConductor {
                 
                 // Check if server is actually ready (only when running but not yet confirmed ready)
                 if (data.status === 'running' && !this.comfyServerReady) {
+                    // Poll more frequently when starting to detect when ready
                     this.checkComfyServerReady();
+                    // Keep checking every 500ms until ready for fast detection
+                    if (!this.serverReadyCheckInterval) {
+                        this.serverReadyCheckInterval = setInterval(() => {
+                            if (this.comfyStatus === 'running' && !this.comfyServerReady) {
+                                this.checkComfyServerReady();
+                            } else {
+                                clearInterval(this.serverReadyCheckInterval);
+                                this.serverReadyCheckInterval = null;
+                            }
+                        }, 500);
+                    }
                 }
                 
                 // Append new output
@@ -2873,13 +4336,57 @@ class MFConductor {
         }
     }
     
+    startBackendLogPolling() {
+        // Only poll in standalone mode (port 8199)
+        if (window.location.port === '8199') {
+            this.backendLogFailureCount = 0;
+            this.pollBackendLogs();
+            this.backendLogPolling = setInterval(() => this.pollBackendLogs(), 2000);
+        }
+    }
+    
+    stopBackendLogPolling() {
+        if (this.backendLogPolling) {
+            clearInterval(this.backendLogPolling);
+            this.backendLogPolling = null;
+        }
+    }
+    
+    async pollBackendLogs() {
+        try {
+            const response = await fetch(`${this.apiBase}/api/backend-logs?since=${this.backendLogIndex}`);
+            if (!response.ok) return;
+            
+            const data = await response.json();
+            if (data.success && data.logs && data.logs.length > 0) {
+                for (const logEntry of data.logs) {
+                    // Remove [MF Conductor] prefix since we're already in MF Conductor console
+                    let message = logEntry.message || '';
+                    if (message.startsWith('[MF Conductor] ')) {
+                        message = message.substring(16); // Remove '[MF Conductor] ' prefix
+                    }
+                    this.log(message, logEntry.type || 'info');
+                }
+                this.backendLogIndex = data.next_index || this.backendLogIndex + data.logs.length;
+            }
+            // Reset failure count on any successful response cycle
+            this.backendLogFailureCount = 0;
+        } catch (error) {
+            // Network errors are common if the server is down; stop polling to avoid hammering the browser.
+            this.backendLogFailureCount = (this.backendLogFailureCount || 0) + 1;
+            if (this.backendLogFailureCount >= 5) {
+                this.stopBackendLogPolling();
+                this.log('Backend log polling stopped (server unreachable). Restart MF Conductor and refresh this page.', 'warning');
+            }
+        }
+    }
+    
     async checkComfyServerReady() {
         const port = this.comfyPort || 8188;
         try {
-            // Try to reach ComfyUI with a short timeout
-            // Use no-cors mode to avoid CORS issues - we just want to know if it responds
+            // Try to reach ComfyUI with a short timeout (500ms for faster detection)
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            const timeoutId = setTimeout(() => controller.abort(), 500);
             
             // Try a simple fetch - any response (even 403) means server is up
             const response = await fetch(`http://127.0.0.1:${port}/`, {
@@ -2894,6 +4401,12 @@ class MFConductor {
             // Any response at all means the server is ready
             if (!this.comfyServerReady) {
                 this.comfyServerReady = true;
+                // Clear the polling interval since we're ready
+                if (this.serverReadyCheckInterval) {
+                    clearInterval(this.serverReadyCheckInterval);
+                    this.serverReadyCheckInterval = null;
+                }
+                this.log(`ComfyUI server ready at http://127.0.0.1:${port}`, 'success');
                 this.appendToConsole(`✓ ComfyUI server ready at http://127.0.0.1:${port}`, 'success');
                 this.updateComfyControls();
             }
@@ -2929,12 +4442,13 @@ class MFConductor {
         }
         this.consoleOutput.push({ text, type, time: Date.now() });
         
-        // Limit console lines to prevent memory issues
-        const maxLines = 2000;
-        const lines = output.querySelectorAll('.console-line');
-        while (lines.length > maxLines && this.consoleOutput.length > maxLines) {
-            lines[0]?.remove();
-            this.consoleOutput.shift();
+        // Limit console lines to prevent memory issues (check periodically, not every append)
+        if (this.consoleOutput.length > 2100) {
+            const maxLines = 2000;
+            while (this.consoleOutput.length > maxLines) {
+                output.firstElementChild?.remove();
+                this.consoleOutput.shift();
+            }
         }
         
         // Save to localStorage (debounced)
@@ -2942,13 +4456,46 @@ class MFConductor {
             this.saveConsoleDebounced();
         }
         
-        // Auto-scroll if enabled
-        if (this.consoleAutoScroll) {
-            this.scrollConsoleToBottom();
+        // Debounced auto-scroll for better performance
+        if (this.consoleAutoScroll && !this._scrollPending) {
+            this._scrollPending = true;
+            requestAnimationFrame(() => {
+                this.scrollConsoleToBottom();
+                this._scrollPending = false;
+            });
         }
-        
-        // Debug log to browser console
-        console.log(`[Console] ${type}: ${text}`);
+    }
+    
+    clearConsoleOutput() {
+        const output = document.getElementById('console-output');
+        if (output) {
+            output.innerHTML = '';
+        }
+        this.consoleOutput = [];
+    }
+    
+    async showSplashScreen() {
+        try {
+            // Fetch the splash screen content (served from web/ directory)
+            const response = await fetch(`${this.apiBase}/assets/splash.txt`);
+            if (!response.ok) return;
+            
+            const splashText = await response.text();
+            const output = document.getElementById('console-output');
+            if (!output) return;
+            
+            // Create splash container with special styling
+            const splashDiv = document.createElement('div');
+            splashDiv.className = 'console-splash';
+            splashDiv.innerHTML = `<pre class="splash-art">${this.escapeHtml(splashText)}</pre>`;
+            output.appendChild(splashDiv);
+            
+            // Add empty line after splash
+            this.appendToConsole('', 'normal', true);
+        } catch (e) {
+            // Splash screen is optional - continue without it
+            console.log('Could not load splash screen:', e);
+        }
     }
     
     saveConsoleDebounced() {
@@ -3024,20 +4571,33 @@ class MFConductor {
     }
     
     clearConsole() {
-        const output = document.getElementById('console-output');
-        if (!output) return;
+        // Clear terminal page output
+        const terminalOutput = document.getElementById('console-output');
+        if (terminalOutput) {
+            terminalOutput.innerHTML = `
+                <div class="console-placeholder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+                        <polyline points="4 17 10 11 4 5"/>
+                        <line x1="12" y1="19" x2="20" y2="19"/>
+                    </svg>
+                    <p>Console cleared</p>
+                </div>
+            `;
+        }
         
-        output.innerHTML = `
-            <div class="console-placeholder">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
-                    <polyline points="4 17 10 11 4 5"/>
-                    <line x1="12" y1="19" x2="20" y2="19"/>
-                </svg>
-                <p>Console cleared</p>
-            </div>
-        `;
+        // Clear bottom console panel
+        if (this.consoleContent) {
+            this.consoleContent.innerHTML = `
+                <div class="console-welcome">
+                    <span class="console-timestamp">[System]</span>
+                    <span class="console-message">Console cleared.</span>
+                </div>
+            `;
+        }
         
         this.consoleOutput = [];
+        this.logCount = 0;
+        this.updateConsoleBadge();
         
         // Also clear localStorage
         try {
@@ -3058,6 +4618,37 @@ class MFConductor {
         } catch (error) {
             this.showToast('error', 'Failed to copy to clipboard');
         }
+    }
+    
+    exportConsoleOutput() {
+        const output = document.getElementById('console-output');
+        if (!output) return;
+        
+        const lines = output.querySelectorAll('.console-line');
+        const text = Array.from(lines).map(l => l.textContent).join('\n');
+        
+        if (!text.trim()) {
+            this.showToast('warning', 'Console is empty');
+            return;
+        }
+        
+        // Create blob and download
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        
+        // Generate filename with timestamp
+        const now = new Date();
+        const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.download = `mf-conductor-terminal-${timestamp}.txt`;
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        this.showToast('success', 'Terminal output exported');
     }
     
     async runPythonCommand() {
@@ -3315,6 +4906,9 @@ class MFConductor {
         if (packagesRefreshBtn) {
             packagesRefreshBtn.addEventListener('click', () => this.loadPackagesTab());
         }
+        
+        // Bind file browser events
+        this.bindFilesEvents();
         const packagesInstallBtn = document.getElementById('packages-install-btn');
         if (packagesInstallBtn) {
             packagesInstallBtn.addEventListener('click', () => this.openPackageInstallModal());
@@ -3451,10 +5045,44 @@ class MFConductor {
         this.log('Loading custom nodes...', 'info');
         
         try {
-            const response = await fetch(`${this.apiBase}/api/nodes`);
-            if (!response.ok) throw new Error('Failed to load nodes');
+            if (window.location.protocol === 'file:') {
+                throw new Error('This page must be opened via the MF Conductor server (not file://)');
+            }
             
-            const data = await response.json();
+            const parseJsonSafe = async (resp) => {
+                try {
+                    return await resp.json();
+                } catch (e) {
+                    return null;
+                }
+            };
+            
+            const tryFetch = async (base, query = '') => {
+                const response = await fetch(`${base}/api/nodes${query}`);
+                const data = await parseJsonSafe(response);
+                return { response, data, base };
+            };
+            
+            let { response, data, base } = await tryFetch(this.apiBase, '?fast=1');
+            
+            if (!response.ok) {
+                const preferAlt = this.apiBase === '/mf_conductor' ? '' : '/mf_conductor';
+                if (this.apiBase !== preferAlt) {
+                    const alt = await tryFetch(preferAlt, '?fast=1');
+                    if (alt.response.ok) {
+                        this.apiBase = alt.base;
+                        response = alt.response;
+                        data = alt.data;
+                        base = alt.base;
+                    }
+                }
+            }
+            
+            if (!response.ok) {
+                const message = (data && data.message) ? data.message : `HTTP ${response.status}`;
+                throw new Error(message);
+            }
+            
             this.nodes = data.nodes || [];
             
             if (this.totalNodesEl) this.totalNodesEl.textContent = this.nodes.length;
@@ -3681,6 +5309,59 @@ class MFConductor {
             } else {
                 this.packagesViewMode = 'list'; // Default to list for packages
             }
+            
+            // Load files tab preferences
+            const savedFilesView = localStorage.getItem('mf_conductor_files_view');
+            if (savedFilesView === 'grid' || savedFilesView === 'list' || savedFilesView === 'workflow') {
+                this.filesViewMode = savedFilesView;
+            } else {
+                this.filesViewMode = 'grid';
+            }
+            
+            const savedFilesFolder = localStorage.getItem('mf_conductor_files_folder');
+            if (savedFilesFolder) {
+                this.filesFolder = savedFilesFolder;
+            }
+            
+            // Enforce workflow view only for output folder
+            if (this.filesViewMode === 'workflow' && this.filesFolder !== 'output') {
+                this.filesViewMode = 'grid';
+            }
+            const savedFilesSort = localStorage.getItem('mf_conductor_files_sort');
+            if (savedFilesSort) {
+                this.filesSortBy = savedFilesSort;
+            }
+            const savedFilesSortDir = localStorage.getItem('mf_conductor_files_sort_dir');
+            if (savedFilesSortDir === 'asc' || savedFilesSortDir === 'desc') {
+                this.filesSortDir = savedFilesSortDir;
+            }
+            const savedFilesRecursive = localStorage.getItem('mf_conductor_files_recursive');
+            if (savedFilesRecursive !== null) {
+                this.filesRecursive = savedFilesRecursive === 'true';
+            }
+            
+            // Load profiles view mode
+            const savedProfilesView = localStorage.getItem('mf_conductor_profiles_view');
+            if (savedProfilesView === 'grid' || savedProfilesView === 'list') {
+                this.profilesViewMode = savedProfilesView;
+            }
+            
+            // Load console preferences
+            const savedConsoleAutoScroll = localStorage.getItem('mf_conductor_console_autoscroll');
+            if (savedConsoleAutoScroll !== null) {
+                this.consoleAutoScroll = savedConsoleAutoScroll === 'true';
+                const checkbox = document.getElementById('console-autoscroll-checkbox');
+                if (checkbox) checkbox.checked = this.consoleAutoScroll;
+            }
+            
+            const savedConsoleExpanded = localStorage.getItem('mf_conductor_console_expanded');
+            if (savedConsoleExpanded === 'true' && this.consolePanel) {
+                this.consolePanel.classList.remove('collapsed');
+                if (this.consoleBody) {
+                    this.consoleBody.style.height = `${this.consoleHeight}px`;
+                }
+                this.updateMainContentPadding();
+            }
         } catch (e) {}
     }
     
@@ -3691,6 +5372,21 @@ class MFConductor {
             localStorage.setItem('mf_conductor_sort_dir', this.sortDirection);
             localStorage.setItem('mf_conductor_browse_view', this.browseViewMode || 'grid');
             localStorage.setItem('mf_conductor_packages_view', this.packagesViewMode || 'list');
+            
+            // Files tab preferences
+            localStorage.setItem('mf_conductor_files_view', this.filesViewMode || 'grid');
+            localStorage.setItem('mf_conductor_files_folder', this.filesFolder || 'output');
+            localStorage.setItem('mf_conductor_files_sort', this.filesSortBy || 'date');
+            localStorage.setItem('mf_conductor_files_sort_dir', this.filesSortDir || 'desc');
+            localStorage.setItem('mf_conductor_files_recursive', this.filesRecursive ? 'true' : 'false');
+            
+            // Profiles tab preferences
+            localStorage.setItem('mf_conductor_profiles_view', this.profilesViewMode || 'grid');
+            
+            // Console preferences
+            localStorage.setItem('mf_conductor_console_autoscroll', this.consoleAutoScroll ? 'true' : 'false');
+            const consoleExpanded = this.consolePanel && !this.consolePanel.classList.contains('collapsed');
+            localStorage.setItem('mf_conductor_console_expanded', consoleExpanded ? 'true' : 'false');
         } catch (e) {}
     }
     
@@ -5078,15 +6774,33 @@ class MFConductor {
     }
     
     showLoading(show) {
+        if (!this.loadingState) {
+            return;
+        }
         this.loadingState.style.display = show ? 'flex' : 'none';
         if (show) {
-            this.nodeList.innerHTML = '';
-            this.emptyState.style.display = 'none';
+            if (this.nodeList) {
+                this.nodeList.innerHTML = '';
+            }
+            if (this.emptyState) {
+                this.emptyState.style.display = 'none';
+            }
         }
     }
     
     // Console methods
     log(message, type = 'info') {
+        // Ensure consoleContent is initialized
+        if (!this.consoleContent) {
+            this.consoleContent = document.getElementById('console-content');
+        }
+        
+        // If still not available, log to browser console as fallback
+        if (!this.consoleContent) {
+            console.log(`[MF Conductor] ${message}`);
+            return;
+        }
+        
         const timestamp = new Date().toLocaleTimeString();
         const entry = document.createElement('div');
         entry.className = `console-entry ${type}`;
@@ -5107,12 +6821,6 @@ class MFConductor {
         // Update badge
         this.logCount++;
         this.updateConsoleBadge();
-        
-        // Expand console if it's collapsed and this is an important message
-        if (this.consolePanel.classList.contains('collapsed') && (type === 'error' || type === 'success')) {
-            this.consolePanel.classList.remove('collapsed');
-            document.body.classList.add('console-expanded');
-        }
     }
     
     updateConsoleBadge() {
@@ -5127,6 +6835,30 @@ class MFConductor {
         if (!isCollapsed && this.consoleBody) {
             this.consoleBody.style.height = `${this.consoleHeight}px`;
         }
+        
+        // Immediately adjust main content area
+        this.updateMainContentPadding();
+        
+        // Save preference
+        this.saveUserPreferences();
+    }
+    
+    updateMainContentPadding() {
+        if (!this.consolePanel) return;
+        
+        const isCollapsed = this.consolePanel.classList.contains('collapsed');
+        const headerHeight = 40; // Console header height
+        
+        // Calculate total console panel height
+        let consolePanelHeight;
+        if (isCollapsed) {
+            consolePanelHeight = headerHeight;
+        } else {
+            consolePanelHeight = headerHeight + (this.consoleHeight || 300);
+        }
+        
+        // Set CSS variable for console height so content can adjust
+        document.documentElement.style.setProperty('--console-panel-height', `${consolePanelHeight}px`);
     }
     
     initConsoleResizer() {
@@ -5134,6 +6866,9 @@ class MFConductor {
         
         // Apply initial height
         this.consoleBody.style.height = `${this.consoleHeight}px`;
+        
+        // Set initial padding for main content
+        this.updateMainContentPadding();
         
         let startY = 0;
         let startHeight = 0;
@@ -5161,6 +6896,9 @@ class MFConductor {
             
             this.consoleBody.style.height = `${newHeight}px`;
             this.consoleHeight = newHeight;
+            
+            // Update main content padding during resize
+            this.updateMainContentPadding();
         };
         
         const onMouseUp = () => {
@@ -5173,6 +6911,9 @@ class MFConductor {
             
             // Save the height preference
             localStorage.setItem('mfc_console_height', this.consoleHeight.toString());
+            
+            // Final update of main content padding
+            this.updateMainContentPadding();
         };
         
         this.consoleResizeHandle.addEventListener('mousedown', onMouseDown);
@@ -5195,23 +6936,20 @@ class MFConductor {
         document.addEventListener('touchend', onMouseUp);
     }
     
-    clearConsole() {
-        this.consoleContent.innerHTML = `
-            <div class="console-welcome">
-                <span class="console-timestamp">[System]</span>
-                <span class="console-message">Console cleared.</span>
-            </div>
-        `;
-        this.logCount = 0;
-        this.updateConsoleBadge();
-    }
-    
     // Utility functions
     escapeHtml(text) {
         if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+    
+    formatBytes(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
     
     formatNumber(num) {
@@ -5283,6 +7021,7 @@ class MFConductor {
                 this.closeInstallModal();
                 this.closeBrowseModal();
                 this.closeSettingsModal();
+                this.closeUsageModal();
                 this.selectedNodes.clear();
                 this.renderNodes();
             }
@@ -5356,9 +7095,13 @@ class MFConductor {
                         notes: data.notes || {},
                         usage: data.usage || {}
                     };
+                    const favCount = this.userData.favorites.length;
+                    const tagCount = Object.keys(this.userData.tags).length;
+                    this.log(`User data loaded (${favCount} favorites, ${tagCount} tagged nodes)`, 'success');
                 }
             }
         } catch (error) {
+            this.log(`Error loading user data: ${error.message}`, 'error');
             console.error('Error loading user data:', error);
         }
     }
@@ -5680,6 +7423,7 @@ class MFConductor {
         });
         if (!confirmed) return;
         
+        this.log(`Deleting profile: ${name}`, 'warning');
         try {
             const response = await fetch(`${this.apiBase}/api/profiles/delete`, {
                 method: 'POST',
@@ -5689,11 +7433,14 @@ class MFConductor {
             const data = await response.json();
             
             if (data.success) {
+                this.log(`Profile "${name}" deleted successfully`, 'success');
                 this.showToast('success', `Profile "${name}" deleted`);
             } else {
+                this.log(`Failed to delete profile: ${data.message}`, 'error');
                 this.showToast('error', data.message);
             }
         } catch (error) {
+            this.log(`Error deleting profile: ${error.message}`, 'error');
             console.error('Error deleting profile:', error);
         }
     }
@@ -5701,6 +7448,7 @@ class MFConductor {
     // ==================== BACKUP / RESTORE ====================
     
     async exportBackup() {
+        this.log('Exporting backup...', 'info');
         try {
             const response = await fetch(`${this.apiBase}/api/backup`);
             const data = await response.json();
@@ -5710,12 +7458,18 @@ class MFConductor {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `mf_conductor_backup_${new Date().toISOString().split('T')[0]}.json`;
+                const filename = `mf_conductor_backup_${new Date().toISOString().split('T')[0]}.json`;
+                a.download = filename;
                 a.click();
                 URL.revokeObjectURL(url);
+                this.log(`Backup exported successfully: ${filename}`, 'success');
                 this.showToast('success', 'Backup exported');
+            } else {
+                this.log(`Failed to export backup: ${data.message}`, 'error');
+                this.showToast('error', 'Failed to export backup');
             }
         } catch (error) {
+            this.log(`Error exporting backup: ${error.message}`, 'error');
             console.error('Error exporting backup:', error);
             this.showToast('error', 'Failed to export backup');
         }
@@ -5730,6 +7484,7 @@ class MFConductor {
             const file = e.target.files[0];
             if (!file) return;
             
+            this.log(`Importing backup from: ${file.name}`, 'info');
             try {
                 const text = await file.text();
                 const backupData = JSON.parse(text);
@@ -5742,6 +7497,7 @@ class MFConductor {
                     cancelText: 'Replace'
                 });
                 
+                this.log(`Importing backup (${merge ? 'merge' : 'replace'} mode)...`, 'info');
                 const response = await fetch(`${this.apiBase}/api/backup/import`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -5750,13 +7506,16 @@ class MFConductor {
                 const data = await response.json();
                 
                 if (data.success) {
+                    this.log('Backup imported successfully', 'success');
                     this.showToast('success', 'Backup imported successfully');
                     await this.loadUserData();
                     this.renderNodes();
                 } else {
+                    this.log(`Failed to import backup: ${data.message}`, 'error');
                     this.showToast('error', data.message);
                 }
             } catch (error) {
+                this.log(`Error importing backup: ${error.message}`, 'error');
                 console.error('Error importing backup:', error);
                 this.showToast('error', 'Failed to import backup - invalid file');
             }
@@ -6374,6 +8133,12 @@ class MFConductor {
                     targetBtn.outerHTML = '<span class="browse-installed-badge">Installed</span>';
                 }
                 
+                // Get the folder name from the response or extract from URL
+                const folderName = data.folder_name || url.split('/').pop().replace('.git', '');
+                
+                // Prompt to enable in profiles
+                await this.promptEnableInProfiles(folderName);
+                
                 // Refresh nodes list in background
                 this.refreshNodes();
                 
@@ -6515,6 +8280,7 @@ class MFConductor {
     }
     
     saveSettings() {
+        this.log('Settings saved', 'info');
         localStorage.setItem('mf_conductor_settings', JSON.stringify(this.settings));
         this.applySettings();
     }
@@ -6589,6 +8355,16 @@ class MFConductor {
             settingsModal.addEventListener('click', (e) => {
                 if (e.target === settingsModal) {
                     this.closeSettingsModal();
+                }
+            });
+        }
+        
+        // Usage modal - click outside to close
+        const usageModal = document.getElementById('usage-modal');
+        if (usageModal) {
+            usageModal.addEventListener('click', (e) => {
+                if (e.target === usageModal) {
+                    this.closeUsageModal();
                 }
             });
         }
@@ -6848,6 +8624,273 @@ class MFConductor {
         }
     }
     
+    // ==================== USAGE ANALYTICS ====================
+    
+    openUsageModal() {
+        const modal = document.getElementById('usage-modal');
+        if (modal) {
+            modal.classList.add('show');
+            this.loadUsageStats();
+        }
+    }
+    
+    closeUsageModal() {
+        const modal = document.getElementById('usage-modal');
+        if (modal) {
+            modal.classList.remove('show');
+        }
+    }
+    
+    async loadUsageStats() {
+        const container = document.getElementById('usage-stats-container');
+        const lastScanEl = document.getElementById('usage-last-scan');
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/usage/stats`);
+            const data = await response.json();
+            
+            if (!data.success) {
+                container.innerHTML = `
+                    <div class="text-center py-8">
+                        <i class="fa-solid fa-exclamation-triangle text-4xl text-yellow-500 mb-4"></i>
+                        <p class="text-slate-400">${data.message || 'Failed to load usage stats'}</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Update last scan time
+            if (data.last_scan) {
+                const date = new Date(data.last_scan);
+                lastScanEl.textContent = `Last scan: ${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+            } else {
+                lastScanEl.textContent = 'Never scanned';
+            }
+            
+            // Render stats
+            this.renderUsageStats(data);
+            
+        } catch (error) {
+            container.innerHTML = `
+                <div class="text-center py-8">
+                    <i class="fa-solid fa-exclamation-triangle text-4xl text-red-500 mb-4"></i>
+                    <p class="text-slate-400">Error loading usage stats: ${error.message}</p>
+                </div>
+            `;
+        }
+    }
+    
+    renderUsageStats(data) {
+        const container = document.getElementById('usage-stats-container');
+        
+        if (!data.total_workflows && data.package_stats.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8">
+                    <i class="fa-solid fa-chart-bar text-4xl text-slate-600 mb-4"></i>
+                    <p class="text-slate-400">No usage data yet. Scan your workflows to get started.</p>
+                    <p class="text-xs text-slate-500 mt-2">This will analyze PNG/WebP files in your output folder to see which nodes you use.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // Build the stats HTML
+        let html = `
+            <div class="usage-summary grid grid-cols-3 gap-4 mb-6">
+                <div class="glass-panel p-4 rounded-lg text-center">
+                    <div class="text-2xl font-bold text-white">${data.total_workflows || 0}</div>
+                    <div class="text-xs text-slate-400">Workflows Scanned</div>
+                </div>
+                <div class="glass-panel p-4 rounded-lg text-center">
+                    <div class="text-2xl font-bold text-white">${data.package_stats?.length || 0}</div>
+                    <div class="text-xs text-slate-400">Packages Tracked</div>
+                </div>
+                <div class="glass-panel p-4 rounded-lg text-center">
+                    <div class="text-2xl font-bold ${data.unused_packages?.length > 0 ? 'text-yellow-400' : 'text-green-400'}">${data.unused_packages?.length || 0}</div>
+                    <div class="text-xs text-slate-400">Never Used</div>
+                </div>
+            </div>
+        `;
+        
+        // Recommendations
+        if (data.recommendations && data.recommendations.length > 0) {
+            html += `<div class="usage-recommendations mb-6">`;
+            for (const rec of data.recommendations) {
+                const iconClass = rec.severity === 'warning' ? 'text-yellow-500' : 'text-blue-400';
+                html += `
+                    <div class="glass-panel p-4 rounded-lg mb-3">
+                        <div class="flex items-start gap-3">
+                            <i class="fa-solid fa-lightbulb ${iconClass} mt-1"></i>
+                            <div class="flex-1">
+                                <div class="text-sm font-medium text-white">${rec.title}</div>
+                                <div class="text-xs text-slate-400 mt-1">${rec.description}</div>
+                                ${rec.packages && rec.packages.length > 0 ? `
+                                    <div class="flex flex-wrap gap-1 mt-2">
+                                        ${rec.packages.slice(0, 5).map(pkg => `
+                                            <span class="text-xs bg-slate-700 px-2 py-0.5 rounded">${pkg}</span>
+                                        `).join('')}
+                                        ${rec.packages.length > 5 ? `<span class="text-xs text-slate-500">+${rec.packages.length - 5} more</span>` : ''}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            html += `</div>`;
+        }
+        
+        // Package usage table
+        if (data.package_stats && data.package_stats.length > 0) {
+            html += `
+                <div class="usage-packages">
+                    <h4 class="text-sm font-semibold text-white mb-3">Package Usage</h4>
+                    <div class="glass-panel rounded-lg overflow-hidden">
+                        <table class="w-full text-sm">
+                            <thead class="bg-black/30">
+                                <tr>
+                                    <th class="text-left p-3 text-slate-400 font-medium">Package</th>
+                                    <th class="text-center p-3 text-slate-400 font-medium w-24">Used</th>
+                                    <th class="text-center p-3 text-slate-400 font-medium w-32">Last Used</th>
+                                    <th class="text-center p-3 text-slate-400 font-medium w-20">Nodes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+            
+            for (const pkg of data.package_stats.slice(0, 30)) {
+                const lastUsed = pkg.last_used ? new Date(pkg.last_used).toLocaleDateString() : 'Never';
+                const usageClass = pkg.count === 0 ? 'text-red-400' : pkg.count < 3 ? 'text-yellow-400' : 'text-green-400';
+                html += `
+                    <tr class="border-t border-border-subtle hover:bg-white/5">
+                        <td class="p-3 text-slate-300">${pkg.name}</td>
+                        <td class="p-3 text-center ${usageClass}">${pkg.count}×</td>
+                        <td class="p-3 text-center text-slate-400 text-xs">${lastUsed}</td>
+                        <td class="p-3 text-center text-slate-400">${pkg.nodes_used || 0}</td>
+                    </tr>
+                `;
+            }
+            
+            html += `
+                            </tbody>
+                        </table>
+                        ${data.package_stats.length > 30 ? `
+                            <div class="text-center p-3 text-xs text-slate-500 border-t border-border-subtle">
+                                Showing top 30 of ${data.package_stats.length} packages
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+        
+        container.innerHTML = html;
+    }
+    
+    async scanUsage(force = false) {
+        const scanBtn = document.getElementById('usage-scan-btn');
+        const rescanBtn = document.getElementById('usage-rescan-btn');
+        
+        if (scanBtn) scanBtn.disabled = true;
+        if (rescanBtn) rescanBtn.disabled = true;
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/usage/scan`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ force })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                this.showToast('info', 'Scanning workflows...');
+                // Poll for progress
+                this.pollUsageScanProgress();
+            } else {
+                this.showToast('error', data.message || 'Failed to start scan');
+                if (scanBtn) scanBtn.disabled = false;
+                if (rescanBtn) rescanBtn.disabled = false;
+            }
+        } catch (error) {
+            this.showToast('error', 'Error starting scan: ' + error.message);
+            if (scanBtn) scanBtn.disabled = false;
+            if (rescanBtn) rescanBtn.disabled = false;
+        }
+    }
+    
+    async pollUsageScanProgress() {
+        const container = document.getElementById('usage-stats-container');
+        const scanBtn = document.getElementById('usage-scan-btn');
+        const rescanBtn = document.getElementById('usage-rescan-btn');
+        
+        const poll = async () => {
+            try {
+                const response = await fetch(`${this.apiBase}/api/usage/progress`);
+                const data = await response.json();
+                
+                if (data.status === 'scanning') {
+                    const pct = data.total > 0 ? Math.round((data.current / data.total) * 100) : 0;
+                    container.innerHTML = `
+                        <div class="text-center py-8">
+                            <i class="fa-solid fa-spinner fa-spin text-4xl text-indigo-400 mb-4"></i>
+                            <p class="text-slate-300">Scanning workflows...</p>
+                            <div class="w-64 mx-auto mt-4 bg-slate-700 rounded-full h-2">
+                                <div class="bg-indigo-500 h-2 rounded-full transition-all" style="width: ${pct}%"></div>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-2">${data.current} / ${data.total} files</p>
+                        </div>
+                    `;
+                    setTimeout(poll, 500);
+                } else if (data.status === 'complete') {
+                    this.showToast('success', 'Scan complete!');
+                    this.loadUsageStats();
+                    if (scanBtn) scanBtn.disabled = false;
+                    if (rescanBtn) rescanBtn.disabled = false;
+                } else if (data.status === 'error') {
+                    this.showToast('error', 'Scan failed');
+                    this.loadUsageStats();
+                    if (scanBtn) scanBtn.disabled = false;
+                    if (rescanBtn) rescanBtn.disabled = false;
+                } else {
+                    // Idle or unknown - just refresh stats
+                    this.loadUsageStats();
+                    if (scanBtn) scanBtn.disabled = false;
+                    if (rescanBtn) rescanBtn.disabled = false;
+                }
+            } catch (error) {
+                this.showToast('error', 'Error checking scan progress');
+                if (scanBtn) scanBtn.disabled = false;
+                if (rescanBtn) rescanBtn.disabled = false;
+            }
+        };
+        
+        poll();
+    }
+    
+    async clearUsageData() {
+        if (!confirm('Are you sure you want to clear all usage data? This cannot be undone.')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/usage/clear`, {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                this.showToast('success', 'Usage data cleared');
+                this.loadUsageStats();
+            } else {
+                this.showToast('error', data.message || 'Failed to clear data');
+            }
+        } catch (error) {
+            this.showToast('error', 'Error clearing data: ' + error.message);
+        }
+    }
+    
     exportSettings() {
         const data = {
             settings: this.settings,
@@ -6910,6 +8953,7 @@ class MFConductor {
             return;
         }
         
+        this.log(`Exporting profile: ${profileName}`, 'info');
         const exportData = {
             type: 'mf_conductor_profile',
             version: '1.0',
@@ -6927,6 +8971,7 @@ class MFConductor {
         a.click();
         URL.revokeObjectURL(url);
         
+        this.log(`Profile "${profileName}" exported successfully`, 'success');
         this.showToast('success', `Profile "${profileName}" exported successfully`);
     }
     
@@ -6938,6 +8983,7 @@ class MFConductor {
             const file = e.target.files[0];
             if (!file) return;
             
+            this.log(`Importing profile from: ${file.name}`, 'info');
             try {
                 const text = await file.text();
                 const data = JSON.parse(text);
@@ -6980,6 +9026,7 @@ class MFConductor {
                 });
                 
                 if (response.ok) {
+                    this.log(`Profile "${profileName}" imported successfully`, 'success');
                     await this.loadProfiles();
                     this.renderProfilesGrid();
                     this.showToast('success', `Profile "${profileName}" imported successfully`);
@@ -6987,6 +9034,7 @@ class MFConductor {
                     throw new Error('Failed to save imported profile');
                 }
             } catch (error) {
+                this.log(`Failed to import profile: ${error.message}`, 'error');
                 console.error('Error importing profile:', error);
                 this.showToast('error', this.parseError(error, 'Failed to import profile'));
             }
@@ -7002,6 +9050,8 @@ class MFConductor {
             confirmText: 'Reset'
         });
         if (!confirmed) return;
+        
+        this.log('Resetting all settings to defaults', 'warning');
         
         this.settings = {
             theme: 'dark',

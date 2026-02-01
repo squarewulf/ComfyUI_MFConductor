@@ -5,7 +5,7 @@ description = "A powerful Custom Node Manager for ComfyUI with profile managemen
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "FriskCinema", email = "contact@friskcinema.com"}
+    {name = "squarewulf"}
 ]
 keywords = [
     "comfyui",

@@ -7,20 +7,23 @@ import os
 import sys
 import json
 import subprocess
+import struct
 import webbrowser
+import time
 from pathlib import Path
 from datetime import datetime
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 import threading
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from node_scanner import NodeScanner, get_node_requirements, refresh_installed_packages, clear_manager_db_cache
+from node_scanner import NodeScanner, get_node_requirements, refresh_installed_packages, clear_manager_db_cache, CACHE_VERSION
 from git_utils import GitUtils, PipUtils
 from user_data import get_user_data
 from browse_nodes import browse_nodes, get_categories, refresh_node_database, get_node_details
+from usage_tracker import get_usage_tracker
 
 
 class MFConductorAPI:
@@ -34,14 +37,212 @@ class MFConductorAPI:
         self._cached_nodes = None
         self._cache_time = None
         
+        # ComfyUI root path (parent of custom_nodes)
+        self.comfy_root = Path(self.custom_nodes_path).parent
+        
         # ComfyUI process management
         self.comfy_process = None
         self.comfy_output_buffer = []
         self.comfy_output_index = 0  # Track what output has been sent to client
         self.output_lock = threading.Lock()
+        
+        # Backend log buffer for frontend console
+        self.backend_logs = []
+        self.backend_log_lock = threading.Lock()
+        self.backend_log_index = 0  # Track what logs have been sent to client
+        self.max_backend_logs = 1000
+        
+        # Console output buffer limits
+        self.max_comfy_output = 5000
+
+    def _extract_png_workflow_prompt_pil(self, file_path: Path):
+        """Best-effort extraction of workflow/prompt strings from PNG via Pillow (img.text/img.info)."""
+        try:
+            from PIL import Image
+
+            img = Image.open(file_path)
+            try:
+                info = getattr(img, 'info', {}) or {}
+                text = getattr(img, 'text', None)
+
+                def _get(src, key: str):
+                    if not src or not hasattr(src, 'get'):
+                        return None
+                    v = src.get(key)
+                    if v is None:
+                        return None
+                    if isinstance(v, (bytes, bytearray)):
+                        return v.decode('utf-8', errors='ignore')
+                    return v
+
+                # Prefer Pillow PNG text chunks if available
+                workflow_data = (
+                    _get(text, 'workflow') or _get(text, 'Workflow') or _get(text, 'comfyui_workflow') or
+                    _get(info, 'workflow') or _get(info, 'Workflow') or _get(info, 'comfyui_workflow')
+                )
+                prompt_data = (
+                    _get(text, 'prompt') or _get(text, 'Prompt') or
+                    _get(info, 'prompt') or _get(info, 'Prompt')
+                )
+
+                # Some exporters store a JSON-ish payload in "parameters"
+                if not prompt_data:
+                    prompt_data = _get(text, 'parameters') or _get(info, 'parameters')
+
+                return workflow_data, prompt_data
+            finally:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+        except Exception:
+            return None, None
+
+    def _decode_exif_user_comment(self, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        if not isinstance(value, (bytes, bytearray)):
+            return None
+        data = bytes(value)
+        if len(data) >= 8:
+            prefix = data[:8]
+            payload = data[8:]
+            if prefix.startswith(b'ASCII'):
+                return payload.decode('ascii', errors='ignore').strip('\x00')
+            if prefix.startswith(b'UNICODE'):
+                try:
+                    return payload.decode('utf-16', errors='ignore').strip('\x00')
+                except Exception:
+                    return payload.decode('utf-16-be', errors='ignore').strip('\x00')
+            if prefix.startswith(b'JIS'):
+                return payload.decode('shift_jis', errors='ignore').strip('\x00')
+        return data.decode('utf-8', errors='ignore')
+
+    def _find_exif_tag_value(self, exif_data: bytes, tag_id: int):
+        if not exif_data:
+            return None
+        data = exif_data
+        if data[:6] == b'Exif\x00\x00':
+            data = data[6:]
+        if len(data) < 8:
+            return None
+        endian = data[:2]
+        if endian == b'II':
+            fmt = '<'
+        elif endian == b'MM':
+            fmt = '>'
+        else:
+            return None
+        if struct.unpack(fmt + 'H', data[2:4])[0] != 42:
+            return None
+        ifd0_offset = struct.unpack(fmt + 'I', data[4:8])[0]
+
+        def read_ifd(offset):
+            if offset + 2 > len(data):
+                return []
+            count = struct.unpack(fmt + 'H', data[offset:offset + 2])[0]
+            entries = []
+            pos = offset + 2
+            for _ in range(count):
+                if pos + 12 > len(data):
+                    break
+                tag, typ, num, value_offset = struct.unpack(fmt + 'HHII', data[pos:pos + 12])
+                entries.append((tag, typ, num, value_offset, pos))
+                pos += 12
+            return entries
+
+        def value_bytes(typ, num, value_offset, entry_pos):
+            type_sizes = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}
+            size = type_sizes.get(typ, 1) * num
+            if size <= 4:
+                return data[entry_pos + 8:entry_pos + 12]
+            if value_offset + size > len(data):
+                return None
+            return data[value_offset:value_offset + size]
+
+        entries0 = read_ifd(ifd0_offset)
+        exif_ifd_offset = None
+        for tag, typ, num, value_offset, pos in entries0:
+            if tag == tag_id:
+                return value_bytes(typ, num, value_offset, pos)
+            if tag == 0x8769:
+                exif_ifd_offset = value_offset
+        if exif_ifd_offset is not None:
+            entries_exif = read_ifd(exif_ifd_offset)
+            for tag, typ, num, value_offset, pos in entries_exif:
+                if tag == tag_id:
+                    return value_bytes(typ, num, value_offset, pos)
+        return None
+
+    def _extract_exif_user_comment(self, img, exif_data):
+        try:
+            exif = img.getexif()
+            if exif:
+                text = self._decode_exif_user_comment(exif.get(0x9286))
+                if text:
+                    return text
+        except Exception:
+            pass
+        if exif_data:
+            try:
+                import piexif
+                exif_dict = piexif.load(exif_data)
+                text = self._decode_exif_user_comment(
+                    exif_dict.get('Exif', {}).get(piexif.ExifIFD.UserComment)
+                )
+                if text:
+                    return text
+            except ImportError:
+                pass
+            except Exception:
+                pass
+            try:
+                raw = self._find_exif_tag_value(exif_data, 0x9286)
+                text = self._decode_exif_user_comment(raw)
+                if text:
+                    return text
+            except Exception:
+                pass
+        return None
     
-    def get_nodes(self, refresh: bool = False) -> dict:
+    def add_backend_log(self, message: str, log_type: str = 'info'):
+        """Add a log message to the backend log buffer"""
+        with self.backend_log_lock:
+            self.backend_logs.append({
+                'message': message,
+                'type': log_type,
+                'time': time.time()
+            })
+            # Keep only last N logs
+            if len(self.backend_logs) > self.max_backend_logs:
+                self.backend_logs.pop(0)
+    
+    def get_backend_logs(self, since_index: int = 0) -> list:
+        """Get backend logs since the given index"""
+        with self.backend_log_lock:
+            return list(self.backend_logs[since_index:])  # Return copy to avoid race condition
+    
+    def get_nodes(self, refresh: bool = False, fast: bool = False) -> dict:
         """Get list of all custom nodes"""
+        if not refresh and fast:
+            cache = self.scanner.get_cached_nodes(allow_stale=True)
+            if cache and cache.get('nodes') is not None:
+                cache_version = cache.get('version')
+                stale = cache_version != CACHE_VERSION
+                self._cached_nodes = cache.get('nodes', [])
+                self._cache_time = cache.get('scanned_at')
+                if stale:
+                    threading.Thread(target=self.scanner.refresh, daemon=True).start()
+                return {
+                    'nodes': self._cached_nodes,
+                    'scanned_at': self._cache_time,
+                    'total': len(self._cached_nodes),
+                    'cache_used': True,
+                    'cache_stale': stale
+                }
+        
         if refresh or self._cached_nodes is None:
             nodes = self.scanner.scan(use_cache=not refresh)
             self._cached_nodes = nodes
@@ -102,7 +303,7 @@ class MFConductorAPI:
         # Refresh the cache
         self.refresh_nodes()
         
-        return {'success': True, 'message': message}
+        return {'success': True, 'message': message, 'folder_name': folder_name}
     
     def open_folder(self, folder_name: str) -> dict:
         """Open the node folder in file explorer"""
@@ -346,9 +547,8 @@ class MFConductorAPI:
         enabled_list = profile.get('enabled', [])
         disabled_list = profile.get('disabled', [])
         
-        # Get all node folders
-        all_nodes = self.scanner.scan()
-        all_folders = [n['folder_name'] for n in all_nodes]
+        # Get all node folders (fast - no full scan needed)
+        all_folders = self.scanner.list_folder_names()
         
         # If enabled list is empty, treat as "all nodes enabled"
         # Otherwise, only enable nodes in the list and disable the rest
@@ -368,13 +568,15 @@ class MFConductorAPI:
                     success, msg = self.scanner.activate_node(folder)
                     if success:
                         results['enabled'].append(folder)
-                    elif 'already' not in msg.lower():
+                    # Ignore "not found" and "already" messages - these are normal
+                    elif 'already' not in msg.lower() and 'not found' not in msg.lower():
                         results['errors'].append(f"{folder}: {msg}")
                 else:
                     success, msg = self.scanner.deactivate_node(folder)
                     if success:
                         results['disabled'].append(folder)
-                    elif 'already' not in msg.lower():
+                    # Ignore "not found" and "already" messages - these are normal
+                    elif 'already' not in msg.lower() and 'not found' not in msg.lower():
                         results['errors'].append(f"{folder}: {msg}")
         
         self._cached_nodes = None
@@ -584,7 +786,7 @@ class MFConductorAPI:
                                         'current_version': current_version,
                                         'latest_version': latest_version
                                     }
-                            except:
+                            except (ImportError, Exception):
                                 # Fallback: simple string comparison if packaging not available
                                 if latest_version > current_version:
                                     return {
@@ -651,13 +853,38 @@ class MFConductorAPI:
                     data = json.loads(response.read())
                     latest = data.get('info', {}).get('version', current)
                     
+                    # Get list of available versions (newer than current)
+                    available_versions = []
+                    releases = data.get('releases', {})
+                    try:
+                        from packaging import version as pkg_version
+                        current_parsed = pkg_version.parse(current) if current != 'unknown' else None
+                        
+                        for ver in releases.keys():
+                            try:
+                                ver_parsed = pkg_version.parse(ver)
+                                # Only include versions newer than current
+                                if current_parsed and ver_parsed > current_parsed:
+                                    # Check if release has files (not yanked/empty)
+                                    if releases[ver]:
+                                        available_versions.append(ver)
+                            except (ValueError, TypeError, KeyError):
+                                continue
+                        
+                        # Sort versions descending (newest first)
+                        available_versions.sort(key=lambda v: pkg_version.parse(v), reverse=True)
+                    except (ImportError, ValueError, KeyError):
+                        # Fallback: just include latest if different
+                        if latest != current:
+                            available_versions = [latest]
+                    
                     # Compare versions properly
                     has_update = False
                     if latest and latest != 'unknown' and latest != current:
                         try:
                             from packaging import version
                             has_update = version.parse(latest) > version.parse(current)
-                        except:
+                        except (ImportError, ValueError, TypeError):
                             # Fallback: simple string comparison
                             has_update = latest > current
                     
@@ -666,7 +893,8 @@ class MFConductorAPI:
                         'name': package_name,
                         'current_version': current,
                         'latest_version': latest,
-                        'has_update': has_update
+                        'has_update': has_update,
+                        'available_versions': available_versions[:10]  # Limit to 10 most recent
                     }
             except urllib.error.HTTPError as e:
                 if e.code == 404:
@@ -716,11 +944,16 @@ class MFConductorAPI:
         except Exception as e:
             return {'success': False, 'message': str(e)}
     
-    def upgrade_package(self, package_name: str) -> dict:
-        """Upgrade a specific package to the latest version"""
+    def upgrade_package(self, package_name: str, version: str = None) -> dict:
+        """Upgrade a specific package to a specific version or latest"""
         try:
+            if version:
+                package_spec = f'{package_name}=={version}'
+            else:
+                package_spec = package_name
+            
             result = subprocess.run(
-                [self.pip.python_path, '-m', 'pip', 'install', '--upgrade', package_name],
+                [self.pip.python_path, '-m', 'pip', 'install', '--upgrade', package_spec],
                 capture_output=True,
                 text=True,
                 timeout=300
@@ -730,11 +963,749 @@ class MFConductorAPI:
             refresh_installed_packages()
             
             if result.returncode == 0:
-                return {'success': True, 'message': f'Successfully upgraded {package_name}'}
+                version_msg = f' to {version}' if version else ''
+                return {'success': True, 'message': f'Successfully upgraded {package_name}{version_msg}'}
             else:
                 return {'success': False, 'message': f'Upgrade failed: {result.stderr}'}
         except subprocess.TimeoutExpired:
             return {'success': False, 'message': 'Upgrade timed out'}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+    
+    # ==================== FILE BROWSER OPERATIONS ====================
+    
+    def get_comfy_folder_path(self, folder_type: str) -> Path:
+        """Get path to a ComfyUI folder (../../output, ../../input, etc. from this module)"""
+        # Simple relative paths from this module's directory
+        module_dir = Path(__file__).parent
+        comfy_root = (module_dir / '../..').resolve()
+        
+        folder_map = {
+            'output': comfy_root / 'output',
+            'input': comfy_root / 'input',
+            'models': comfy_root / 'models',
+            'temp': comfy_root / 'temp',
+        }
+        
+        return folder_map.get(folder_type, comfy_root / 'output')
+    
+    def get_files(self, folder_type: str = 'output', subfolder: str = '', 
+                  sort_by: str = 'date', sort_dir: str = 'desc',
+                  file_type: str = '', search: str = '', recursive: bool = False,
+                  with_workflow: bool = False) -> dict:
+        """Get files from a ComfyUI folder"""
+        try:
+            # Handle 'both' folder type - combine output and input
+            if folder_type == 'both':
+                output_result = self.get_files('output', subfolder, sort_by, sort_dir, file_type, search, recursive, with_workflow)
+                input_result = self.get_files('input', subfolder, sort_by, sort_dir, file_type, search, recursive, with_workflow)
+                
+                all_files = []
+                if output_result.get('success'):
+                    for f in output_result.get('files', []):
+                        f['source'] = 'output'
+                    all_files.extend(output_result.get('files', []))
+                if input_result.get('success'):
+                    for f in input_result.get('files', []):
+                        f['source'] = 'input'
+                    all_files.extend(input_result.get('files', []))
+                
+                # Re-sort combined results
+                sort_key_map = {
+                    'name': lambda x: x['name'].lower(),
+                    'date': lambda x: x['modified'],
+                    'size': lambda x: x['size'],
+                    'type': lambda x: (x['type'], x['name'].lower()),
+                    'workflow': lambda x: (x.get('workflow') or '', x['name'].lower())
+                }
+                sort_key = sort_key_map.get(sort_by, sort_key_map['date'])
+                all_files.sort(key=sort_key, reverse=(sort_dir == 'desc'))
+                
+                total_size = sum(f.get('size', 0) for f in all_files)
+                return {
+                    'success': True,
+                    'files': all_files[:500],  # Limit
+                    'path': 'output + input',
+                    'folder_type': 'both',
+                    'subfolder': subfolder,
+                    'total': len(all_files),
+                    'total_size': total_size
+                }
+            
+            folder_path = self.get_comfy_folder_path(folder_type)
+            
+            if subfolder and not recursive:
+                folder_path = folder_path / subfolder
+            
+            if not folder_path.exists():
+                return {
+                    'success': True,
+                    'files': [],
+                    'path': str(folder_path),
+                    'total': 0,
+                    'total_size': 0
+                }
+            
+            files = []
+            total_size = 0
+            max_files = 500  # Limit for performance
+            
+            # File type extensions
+            image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff'}
+            video_exts = {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.gif'}
+            audio_exts = {'.mp3', '.wav', '.ogg', '.flac', '.m4a'}
+            
+            base_path = self.get_comfy_folder_path(folder_type)
+            
+            # Use rglob for recursive, iterdir for non-recursive
+            items_iter = folder_path.rglob('*') if recursive else folder_path.iterdir()
+            
+            items_processed = 0
+            for item in items_iter:
+                items_processed += 1
+                if item.name.startswith('.'):
+                    continue
+                
+                # Skip directories in recursive mode
+                if recursive and item.is_dir():
+                    continue
+                
+                ext = item.suffix.lower()
+                
+                # Determine file type
+                if item.is_dir():
+                    ftype = 'folder'
+                elif ext in image_exts:
+                    ftype = 'image'
+                elif ext in video_exts:
+                    ftype = 'video'
+                elif ext in audio_exts:
+                    ftype = 'audio'
+                else:
+                    ftype = 'other'
+                
+                # Apply type filter
+                if file_type and ftype != file_type and ftype != 'folder':
+                    continue
+                
+                # Apply search filter
+                if search and search.lower() not in item.name.lower():
+                    continue
+                
+                try:
+                    stat = item.stat()
+                    size = stat.st_size if item.is_file() else 0
+                    mtime = stat.st_mtime
+                except Exception as stat_error:
+                    print(f"[MF Conductor] Warning: Could not stat {item}: {stat_error}")
+                    size = 0
+                    mtime = 0
+                
+                total_size += size
+                
+                try:
+                    rel_path = str(item.relative_to(base_path)).replace('\\', '/')
+                except ValueError:
+                    rel_path = item.name
+                
+                # Extract workflow name from image metadata (PNG and WebP) - only if requested
+                workflow_name = None
+                if with_workflow and ext in ['.png', '.webp'] and item.is_file():
+                    workflow_name = self._get_workflow_name(item)
+                
+                files.append({
+                    'name': item.name,
+                    'path': rel_path,
+                    'type': ftype,
+                    'extension': ext,
+                    'size': size,
+                    'modified': mtime,
+                    'is_dir': item.is_dir(),
+                    'workflow': workflow_name
+                })
+                
+                # Limit files for performance
+                if len(files) >= max_files:
+                    break
+            
+            # Sort files
+            sort_key_map = {
+                'name': lambda x: x['name'].lower(),
+                'date': lambda x: x['modified'],
+                'size': lambda x: x['size'],
+                'type': lambda x: (x['type'], x['name'].lower()),
+                'workflow': lambda x: (x.get('workflow') or '', x['name'].lower())
+            }
+            
+            sort_key = sort_key_map.get(sort_by, sort_key_map['date'])
+            files.sort(key=sort_key, reverse=(sort_dir == 'desc'))
+            
+            return {
+                'success': True,
+                'files': files,
+                'path': str(folder_path),
+                'folder_type': folder_type,
+                'subfolder': subfolder,
+                'total': len(files),
+                'total_size': total_size
+            }
+        except Exception as e:
+            import traceback
+            error_msg = f"[MF Conductor] get_files error: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
+            return {'success': False, 'message': str(e)}
+    
+    def _get_workflow_name(self, file_path: Path) -> str:
+        """Extract workflow name from image metadata (PNG/WebP) - returns a descriptive name or 'Workflow' if one exists"""
+        ext = file_path.suffix.lower()
+        
+        # Handle WebP files
+        if ext == '.webp':
+            return self._get_webp_workflow_name(file_path)
+        
+        # Try PIL first (most reliable for PNG metadata)
+        workflow_data = None
+        prompt_data = None
+        
+        try:
+            workflow_data, prompt_data = self._extract_png_workflow_prompt_pil(file_path)
+        except OSError:
+            pass # File might be locked or truncated
+        except Exception:
+            pass
+        
+        # Fallback to manual chunk parsing if PIL didn't find anything
+        if not workflow_data and not prompt_data:
+            try:
+                import zlib
+                
+                with open(file_path, 'rb') as f:
+                    sig = f.read(8)
+                    if sig != b'\x89PNG\r\n\x1a\n':
+                        return None
+                    
+                    while True:
+                        length_bytes = f.read(4)
+                        if len(length_bytes) < 4:
+                            break
+                        
+                        length = int.from_bytes(length_bytes, 'big')
+                        # Read chunk type safely
+                        chunk_type_bytes = f.read(4)
+                        if len(chunk_type_bytes) < 4:
+                            break
+                        chunk_type = chunk_type_bytes.decode('ascii', errors='ignore')
+                        
+                        if chunk_type == 'tEXt':
+                            data = f.read(length)
+                            if b'\x00' in data:
+                                keyword, text = data.split(b'\x00', 1)
+                                keyword = keyword.decode('latin-1', errors='ignore').strip().lower()
+                                if keyword in ('workflow', 'comfyui_workflow'):
+                                    workflow_data = text.decode('utf-8', errors='ignore')
+                                elif keyword in ('prompt', 'parameters'):
+                                    prompt_data = text.decode('utf-8', errors='ignore')
+                        
+                        elif chunk_type == 'zTXt':
+                            data = f.read(length)
+                            try:
+                                null_idx = data.index(b'\x00')
+                                keyword = data[:null_idx].decode('latin-1', errors='ignore').strip().lower()
+                                compression_method = data[null_idx + 1]
+                                compressed_data = data[null_idx + 2:]
+                                if compression_method == 0:
+                                    text = zlib.decompress(compressed_data).decode('utf-8', errors='ignore')
+                                    if keyword in ('workflow', 'comfyui_workflow'):
+                                        workflow_data = text
+                                    elif keyword in ('prompt', 'parameters'):
+                                        prompt_data = text
+                            except Exception:
+                                pass
+                        
+                        elif chunk_type == 'iTXt':
+                            data = f.read(length)
+                            try:
+                                null_idx = data.index(b'\x00')
+                                keyword = data[:null_idx].decode('utf-8', errors='ignore').strip().lower()
+                                rest = data[null_idx + 1:]
+                                
+                                if len(rest) >= 2:
+                                    compression_flag = rest[0]
+                                    rest = rest[2:]
+                                    
+                                    null_idx = rest.index(b'\x00')
+                                    rest = rest[null_idx + 1:]
+                                    null_idx = rest.index(b'\x00')
+                                    text_data = rest[null_idx + 1:]
+                                    
+                                    if compression_flag == 1:
+                                        text_data = zlib.decompress(text_data)
+                                    
+                                    text = text_data.decode('utf-8', errors='ignore')
+                                    
+                                    if keyword in ('workflow', 'comfyui_workflow'):
+                                        workflow_data = text
+                                    elif keyword in ('prompt', 'parameters'):
+                                        prompt_data = text
+                            except Exception:
+                                pass
+                        
+                        elif chunk_type == 'IEND':
+                            break
+                        else:
+                            f.read(length)
+                        
+                        f.read(4)  # CRC
+            except Exception:
+                pass
+        
+        # Now extract a descriptive workflow name from the data we found
+        if workflow_data:
+            try:
+                wf = json.loads(workflow_data) if isinstance(workflow_data, str) else workflow_data
+                
+                # 1. Check extra fields for explicit titles
+                extra = wf.get('extra', {})
+                if isinstance(extra, dict):
+                    for key in ['title', 'workflow_name', 'name']:
+                        if extra.get(key) and len(str(extra[key])) < 60:
+                            return str(extra[key])
+                    if isinstance(extra.get('ds'), dict):
+                        for key in ['title', 'workflow_name', 'name']:
+                            if extra['ds'].get(key) and len(str(extra['ds'][key])) < 60:
+                                return str(extra['ds'][key])
+                
+                # 2. Look for Note nodes with workflow info
+                nodes = wf.get('nodes', [])
+                for node in nodes:
+                    node_type = node.get('type', '')
+                    
+                    if node_type == 'Note':
+                        vals = node.get('widgets_values', [])
+                        if vals and isinstance(vals[0], str):
+                            note_text = vals[0].strip()
+                            if len(note_text) < 60 and '\n' not in note_text[:50]:
+                                first_line = note_text.split('\n')[0].strip()
+                                if len(first_line) > 3 and len(first_line) < 60:
+                                    return first_line
+                
+                # 3. Get checkpoint name as workflow identifier
+                for node in nodes:
+                    node_type = node.get('type', '')
+                    if node_type in ['CheckpointLoaderSimple', 'CheckpointLoader', 'UNETLoader']:
+                        vals = node.get('widgets_values', [])
+                        if vals and isinstance(vals[0], str) and vals[0]:
+                            ckpt_name = vals[0]
+                            ckpt_name = ckpt_name.replace('.safetensors', '').replace('.ckpt', '').replace('.pt', '')
+                            ckpt_name = ckpt_name.split('/')[-1].split('\\')[-1]
+                            if len(ckpt_name) < 50:
+                                return ckpt_name
+                
+                # 4. If we have workflow data but couldn't extract a name, return generic
+                return "Workflow"
+                
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                return "Workflow"
+        
+        # Try prompt data as fallback
+        if prompt_data:
+            try:
+                prompt = json.loads(prompt_data) if isinstance(prompt_data, str) else prompt_data
+                for node_id, node_data in prompt.items():
+                    if isinstance(node_data, dict):
+                        class_type = node_data.get('class_type', '')
+                        if class_type in ['CheckpointLoaderSimple', 'CheckpointLoader', 'UNETLoader']:
+                            inputs = node_data.get('inputs', {})
+                            ckpt = inputs.get('ckpt_name', '') or inputs.get('unet_name', '')
+                            if ckpt:
+                                ckpt = ckpt.replace('.safetensors', '').replace('.ckpt', '').replace('.pt', '')
+                                ckpt = ckpt.split('/')[-1].split('\\')[-1]
+                                if len(ckpt) < 50:
+                                    return ckpt
+                return "Workflow"
+            except Exception:
+                return "Workflow"
+        
+        return None
+    
+    def _get_webp_workflow_name(self, file_path: Path) -> str:
+        """Extract workflow name from WebP EXIF metadata"""
+        try:
+            from PIL import Image
+            
+            img = Image.open(file_path)
+            workflow_data = None
+            prompt_data = None
+            
+            # Check EXIF data
+            exif_data = img.info.get('exif')
+            user_comment = self._extract_exif_user_comment(img, exif_data)
+            if user_comment:
+                workflow_data = user_comment
+            
+            # Check metadata dict
+            if not workflow_data and 'workflow' in img.info:
+                workflow_data = img.info['workflow']
+            if not prompt_data and 'prompt' in img.info:
+                prompt_data = img.info['prompt']
+            if not prompt_data and 'parameters' in img.info:
+                prompt_data = img.info['parameters']
+            
+            # Try to extract name from workflow data
+            if workflow_data:
+                try:
+                    wf = json.loads(workflow_data) if isinstance(workflow_data, str) else workflow_data
+                    
+                    # Check extra fields
+                    extra = wf.get('extra', {})
+                    if isinstance(extra, dict):
+                        for key in ['title', 'workflow_name', 'name']:
+                            if extra.get(key) and len(str(extra[key])) < 60:
+                                return str(extra[key])
+                    
+                    # Check nodes for checkpoint name
+                    nodes = wf.get('nodes', [])
+                    for node in nodes:
+                        if node.get('type') in ['CheckpointLoaderSimple', 'CheckpointLoader', 'UNETLoader']:
+                            vals = node.get('widgets_values', [])
+                            if vals and isinstance(vals[0], str) and vals[0]:
+                                ckpt = vals[0].replace('.safetensors', '').replace('.ckpt', '')
+                                return ckpt.split('/')[-1].split('\\')[-1][:50]
+                    
+                    return "Workflow"
+                except (json.JSONDecodeError, KeyError, TypeError, IndexError):
+                    return "Workflow"
+            
+            if prompt_data:
+                return "Workflow"
+            
+            return None
+        except Exception:
+            return None
+    
+    def get_file_workflow(self, folder_type: str, file_path: str) -> dict:
+        """Get full workflow JSON from PNG metadata (supports tEXt, zTXt, iTXt chunks)"""
+        import zlib
+        
+        try:
+            full_path = self._validate_file_path(folder_type, file_path)
+            
+            if not full_path.exists():
+                return {'success': False, 'message': 'File not found'}
+            
+            ext = full_path.suffix.lower()
+            
+            # Handle WebP files (EXIF UserComment)
+            if ext == '.webp':
+                return self._extract_webp_workflow(full_path)
+            
+            if ext != '.png':
+                return {'success': False, 'message': 'Only PNG and WebP files contain workflow data'}
+            
+            workflow_data = None
+            prompt_data = None
+
+            # Try Pillow first (handles iTXt/zTXt/tEXt via img.text on many builds)
+            pil_workflow, pil_prompt = self._extract_png_workflow_prompt_pil(full_path)
+            workflow_data = pil_workflow or workflow_data
+            prompt_data = pil_prompt or prompt_data
+
+            # If Pillow found something usable, return early
+            if workflow_data:
+                try:
+                    workflow = json.loads(workflow_data) if isinstance(workflow_data, str) else workflow_data
+                    return {'success': True, 'workflow': workflow, 'type': 'workflow'}
+                except Exception:
+                    pass
+            if prompt_data:
+                try:
+                    prompt = json.loads(prompt_data) if isinstance(prompt_data, str) else prompt_data
+                    return {'success': True, 'workflow': prompt, 'type': 'prompt'}
+                except Exception:
+                    pass
+            
+            with open(full_path, 'rb') as f:
+                sig = f.read(8)
+                if sig != b'\x89PNG\r\n\x1a\n':
+                    return {'success': False, 'message': 'Invalid PNG file'}
+                
+                while True:
+                    length_bytes = f.read(4)
+                    if len(length_bytes) < 4:
+                        break
+                    
+                    length = int.from_bytes(length_bytes, 'big')
+                    chunk_type = f.read(4).decode('ascii', errors='ignore')
+                    
+                    if chunk_type == 'tEXt':
+                        data = f.read(length)
+                        if b'\x00' in data:
+                            keyword, text = data.split(b'\x00', 1)
+                            keyword = keyword.decode('latin-1', errors='ignore').strip().lower()
+                            if keyword in ('workflow', 'comfyui_workflow'):
+                                workflow_data = text.decode('utf-8', errors='ignore')
+                            elif keyword in ('prompt', 'parameters'):
+                                prompt_data = text.decode('utf-8', errors='ignore')
+                    
+                    elif chunk_type == 'zTXt':
+                        data = f.read(length)
+                        try:
+                            null_idx = data.index(b'\x00')
+                            keyword = data[:null_idx].decode('latin-1', errors='ignore').strip().lower()
+                            compression_method = data[null_idx + 1]
+                            compressed_data = data[null_idx + 2:]
+                            if compression_method != 0:
+                                raise ValueError("Unsupported zTXt compression method")
+                            text = zlib.decompress(compressed_data).decode('utf-8', errors='ignore')
+                            
+                            if keyword in ('workflow', 'comfyui_workflow'):
+                                workflow_data = text
+                            elif keyword in ('prompt', 'parameters'):
+                                prompt_data = text
+                        except (ValueError, zlib.error, UnicodeDecodeError):
+                            pass
+                    
+                    elif chunk_type == 'iTXt':
+                        data = f.read(length)
+                        try:
+                            null_idx = data.index(b'\x00')
+                            keyword = data[:null_idx].decode('utf-8', errors='ignore').strip().lower()
+                            rest = data[null_idx + 1:]
+                            
+                            if len(rest) >= 2:
+                                compression_flag = rest[0]
+                                rest = rest[2:]
+                                
+                                null_idx = rest.index(b'\x00')
+                                rest = rest[null_idx + 1:]
+                                null_idx = rest.index(b'\x00')
+                                text_data = rest[null_idx + 1:]
+                                
+                                if compression_flag == 1:
+                                    text_data = zlib.decompress(text_data)
+                                
+                                text = text_data.decode('utf-8', errors='ignore')
+                                
+                                if keyword in ('workflow', 'comfyui_workflow'):
+                                    workflow_data = text
+                                elif keyword in ('prompt', 'parameters'):
+                                    prompt_data = text
+                        except (ValueError, zlib.error, UnicodeDecodeError, IndexError):
+                            pass
+                    
+                    elif chunk_type == 'IEND':
+                        break
+                    else:
+                        # IMPORTANT: don't read large chunks (e.g. IDAT) into memory
+                        try:
+                            f.seek(length, 1)
+                        except Exception:
+                            # Fallback for non-seekable streams (shouldn't happen for files)
+                            f.read(length)
+                    
+                    f.read(4)  # CRC
+            
+            # Return workflow if found (preferred - contains UI layout)
+            if workflow_data:
+                try:
+                    workflow = json.loads(workflow_data)
+                    return {'success': True, 'workflow': workflow, 'type': 'workflow'}
+                except json.JSONDecodeError:
+                    pass
+            
+            # Fall back to prompt data (execution-only, no UI layout)
+            if prompt_data:
+                try:
+                    prompt = json.loads(prompt_data)
+                    return {'success': True, 'workflow': prompt, 'type': 'prompt'}
+                except json.JSONDecodeError:
+                    pass
+            
+            return {'success': False, 'message': 'No workflow found in this image'}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+    
+    def _extract_webp_workflow(self, file_path: Path) -> dict:
+        """Extract workflow from WebP EXIF UserComment field"""
+        try:
+            # Try using PIL/Pillow for EXIF extraction
+            from PIL import Image
+            
+            img = Image.open(file_path)
+            exif_data = img.info.get('exif')
+            
+            if exif_data:
+                text = self._extract_exif_user_comment(img, exif_data)
+                if text:
+                    try:
+                        workflow = json.loads(text)
+                        return {'success': True, 'workflow': workflow, 'type': 'workflow'}
+                    except json.JSONDecodeError:
+                        pass
+            
+            # Also check for workflow in metadata dict
+            if 'workflow' in img.info:
+                try:
+                    workflow = json.loads(img.info['workflow'])
+                    return {'success': True, 'workflow': workflow, 'type': 'workflow'}
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            if 'prompt' in img.info:
+                try:
+                    prompt = json.loads(img.info['prompt'])
+                    return {'success': True, 'workflow': prompt, 'type': 'prompt'}
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            if 'parameters' in img.info:
+                try:
+                    prompt = json.loads(img.info['parameters'])
+                    return {'success': True, 'workflow': prompt, 'type': 'prompt'}
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            return {'success': False, 'message': 'No workflow found in WebP file'}
+        except Exception as e:
+            return {'success': False, 'message': f'Error reading WebP: {str(e)}'}
+    
+    def get_file_thumbnail(self, folder_type: str, file_path: str):
+        """Get thumbnail for an image file (only images, not videos)"""
+        try:
+            full_path = self._validate_file_path(folder_type, file_path)
+            
+            if not full_path.exists():
+                return None, None
+            
+            ext = full_path.suffix.lower()
+            
+            # Only serve image types - videos should use frontend placeholders
+            content_types = {
+                '.png': 'image/png',
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.bmp': 'image/bmp',
+            }
+            
+            content_type = content_types.get(ext)
+            
+            # Return None for non-image files (videos, etc.)
+            if not content_type:
+                return None, None
+            
+            with open(full_path, 'rb') as f:
+                data = f.read()
+            
+            return data, content_type
+        except Exception:
+            return None, None
+    
+    def _validate_file_path(self, folder_type: str, file_path: str) -> Path:
+        """Validate and resolve file path, preventing path traversal attacks.
+        Returns the validated path or raises ValueError if invalid."""
+        base_path = self.get_comfy_folder_path(folder_type).resolve()
+        
+        # Normalize and resolve the full path
+        full_path = (base_path / file_path).resolve()
+        
+        # Security check: ensure the resolved path is within the base folder
+        try:
+            full_path.relative_to(base_path)
+        except ValueError:
+            raise ValueError(f"Path traversal attempt blocked: {file_path}")
+        
+        return full_path
+    
+    def serve_file(self, folder_type: str, file_path: str):
+        """Serve a file from output/input folder with proper content-type"""
+        try:
+            full_path = self._validate_file_path(folder_type, file_path)
+            
+            if not full_path.exists():
+                return None, None, 0
+            
+            ext = full_path.suffix.lower()
+            
+            content_types = {
+                # Images
+                '.png': 'image/png',
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.bmp': 'image/bmp',
+                # Videos
+                '.mp4': 'video/mp4',
+                '.webm': 'video/webm',
+                '.mov': 'video/quicktime',
+                '.avi': 'video/x-msvideo',
+                '.mkv': 'video/x-matroska',
+                # Audio
+                '.mp3': 'audio/mpeg',
+                '.wav': 'audio/wav',
+                '.ogg': 'audio/ogg',
+                '.flac': 'audio/flac',
+            }
+            
+            content_type = content_types.get(ext, 'application/octet-stream')
+            file_size = full_path.stat().st_size
+            
+            return full_path, content_type, file_size
+        except Exception:
+            return None, None, 0
+    
+    def delete_file(self, folder_type: str, file_path: str) -> dict:
+        """Delete a file from a ComfyUI folder"""
+        try:
+            full_path = self._validate_file_path(folder_type, file_path)
+            
+            if not full_path.exists():
+                return {'success': False, 'message': 'File not found'}
+            
+            # Security check - ensure path is within the folder
+            try:
+                full_path.relative_to(self.get_comfy_folder_path(folder_type))
+            except ValueError:
+                return {'success': False, 'message': 'Invalid path'}
+            
+            if full_path.is_dir():
+                import shutil
+                shutil.rmtree(full_path)
+                self.add_backend_log(f"Deleted folder: {file_path}", 'success')
+            else:
+                full_path.unlink()
+                self.add_backend_log(f"Deleted file: {file_path}", 'success')
+            
+            return {'success': True, 'message': f'Deleted: {file_path}'}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+    
+    def open_file_location(self, folder_type: str, file_path: str = '') -> dict:
+        """Open file location in file explorer"""
+        try:
+            folder_path = self.get_comfy_folder_path(folder_type)
+            
+            if file_path:
+                full_path = folder_path / file_path
+                if full_path.exists():
+                    if full_path.is_file():
+                        folder_path = full_path.parent
+                    else:
+                        folder_path = full_path
+            
+            if not folder_path.exists():
+                return {'success': False, 'message': 'Folder not found'}
+            
+            if sys.platform == 'win32':
+                os.startfile(str(folder_path))
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', str(folder_path)])
+            else:
+                subprocess.run(['xdg-open', str(folder_path)])
+            
+            return {'success': True, 'message': 'Folder opened'}
         except Exception as e:
             return {'success': False, 'message': str(e)}
     
@@ -885,7 +1856,9 @@ class MFConductorAPI:
         
         cmd = [str(python_path), '-u', str(main_script)] + flags  # -u for unbuffered output
         
-        print(f"[MF Conductor] Launching ComfyUI: {' '.join(cmd)}")
+        log_msg = f"[MF Conductor] Launching ComfyUI: {' '.join(cmd)}"
+        print(log_msg)
+        self.add_backend_log(log_msg, 'info')
         
         with self.output_lock:
             self.comfy_output_buffer.append({
@@ -920,7 +1893,9 @@ class MFConductorAPI:
             
             return {'success': True, 'message': 'ComfyUI started', 'pid': self.comfy_process.pid}
         except Exception as e:
-            print(f"[MF Conductor] Error launching ComfyUI: {e}")
+            log_msg = f"[MF Conductor] Error launching ComfyUI: {e}"
+            print(log_msg)
+            self.add_backend_log(log_msg, 'error')
             return {'success': False, 'message': str(e)}
     
     def _decode_line(self, line_bytes):
@@ -976,6 +1951,10 @@ class MFConductorAPI:
                 
                 with self.output_lock:
                     self.comfy_output_buffer.append({'text': line, 'type': line_type})
+                    # Prevent unbounded growth
+                    if len(self.comfy_output_buffer) > self.max_comfy_output:
+                        self.comfy_output_buffer = self.comfy_output_buffer[-self.max_comfy_output:]
+                        self.comfy_output_index = min(self.comfy_output_index, len(self.comfy_output_buffer))
                     
             # Process ended
             with self.output_lock:
@@ -1010,7 +1989,9 @@ class MFConductorAPI:
             return {'success': False, 'message': 'ComfyUI is not running'}
         
         try:
-            print("[MF Conductor] Stopping ComfyUI process...")
+            log_msg = "[MF Conductor] Stopping ComfyUI process..."
+            print(log_msg)
+            self.add_backend_log(log_msg, 'info')
             
             if os.name == 'nt':
                 # On Windows, send CTRL+BREAK to the process group
@@ -1026,7 +2007,9 @@ class MFConductorAPI:
             try:
                 self.comfy_process.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                print("[MF Conductor] Process not responding, force killing...")
+                log_msg = "[MF Conductor] Process not responding, force killing..."
+                print(log_msg)
+                self.add_backend_log(log_msg, 'warning')
                 self.comfy_process.kill()
                 self.comfy_process.wait()
             
@@ -1036,7 +2019,9 @@ class MFConductorAPI:
             self.comfy_process = None
             return {'success': True, 'message': 'ComfyUI stopped'}
         except Exception as e:
-            print(f"[MF Conductor] Error stopping ComfyUI: {e}")
+            log_msg = f"[MF Conductor] Error stopping ComfyUI: {e}"
+            print(log_msg)
+            self.add_backend_log(log_msg, 'error')
             self.comfy_process = None
             return {'success': False, 'message': str(e)}
     
@@ -1349,19 +2334,44 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
     
     def log_message(self, format, *args):
         """Custom log format - suppress noisy polling endpoints"""
-        msg = args[0] if args else ''
-        # Skip logging for frequently polled endpoints
-        if '/api/comfy/output' in msg or '/api/comfy/status' in msg:
+        # Safely convert args to string (handles HTTPStatus objects, etc.)
+        try:
+            msg = format % args if args else format
+        except Exception:
+            msg = str(args[0]) if args else str(format)
+        
+        # Ensure msg is a string for the 'in' check
+        msg_str = str(msg)
+        
+        # Skip logging for:
+        # - Frequently polled endpoints
+        # - Thumbnail 404s (expected for videos)
+        # - Generic 404 error messages
+        skip_patterns = [
+            '/api/comfy/output', '/api/comfy/status', '/api/backend-logs',
+            '/api/files/thumbnail', '/api/files/serve',
+            'code 404', 'File not found'
+        ]
+        if any(x in msg_str for x in skip_patterns):
             return
-        print(f"[MF Conductor] {msg}")
+        
+        log_msg = f"[MF Conductor] {msg_str}"
+        print(log_msg)
+        
+        # Also add to backend log buffer for frontend console
+        if self.api:
+            self.api.add_backend_log(log_msg, 'info')
     
     def send_json(self, data: dict, status: int = 200):
         """Send a JSON response"""
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode('utf-8'))
+        try:
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode('utf-8'))
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass  # Client disconnected - ignore
     
     def do_OPTIONS(self):
         """Handle CORS preflight"""
@@ -1379,7 +2389,8 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         
         # API routes
         if path == '/api/nodes':
-            data = self.api.get_nodes()
+            fast = query.get('fast', ['false'])[0].lower() in ('1', 'true', 'yes')
+            data = self.api.get_nodes(fast=fast)
             self.send_json(data)
             return
         
@@ -1510,6 +2521,17 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             self.send_json(data)
             return
         
+        # Backend logs for frontend console
+        if path == '/api/backend-logs':
+            since_index = int(query.get('since', ['0'])[0])
+            new_logs = self.api.get_backend_logs(since_index)
+            self.send_json({
+                'success': True,
+                'logs': new_logs,
+                'next_index': len(self.api.backend_logs)
+            })
+            return
+        
         # Packages
         if path == '/api/packages':
             data = self.api.get_packages()
@@ -1556,11 +2578,108 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             self.send_json({'success': True, 'path': desktop})
             return
         
+        # File Browser API
+        if path == '/api/files':
+            try:
+                folder_type = query.get('folder', ['output'])[0]
+                subfolder = query.get('subfolder', [''])[0]
+                sort_by = query.get('sort', ['date'])[0]
+                sort_dir = query.get('dir', ['desc'])[0]
+                file_type = query.get('type', [''])[0]
+                search = query.get('search', [''])[0]
+                recursive = query.get('recursive', ['false'])[0].lower() == 'true'
+                with_workflow = query.get('with_workflow', ['false'])[0].lower() == 'true'
+                data = self.api.get_files(folder_type, subfolder, sort_by, sort_dir, file_type, search, recursive, with_workflow)
+                self.send_json(data)
+            except Exception as e:
+                import traceback
+                error_msg = f"[MF Conductor] Error in /api/files: {str(e)}\n{traceback.format_exc()}"
+                print(error_msg)
+                self.api.add_backend_log(error_msg, 'error')
+                self.send_json({'success': False, 'message': str(e)}, 500)
+            return
+        
+        if path.startswith('/api/files/thumbnail/'):
+            # /api/files/thumbnail/output/path/to/file.png
+            parts = path.split('/api/files/thumbnail/')[1].split('/', 1)
+            if len(parts) >= 2:
+                folder_type = parts[0]
+                file_path = unquote(parts[1])
+                data, content_type = self.api.get_file_thumbnail(folder_type, file_path)
+                if data:
+                    self.send_response(200)
+                    self.send_header('Content-Type', content_type)
+                    self.send_header('Cache-Control', 'max-age=3600')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+            self.send_error(404, 'File not found')
+            return
+        
+        if path.startswith('/api/files/workflow/'):
+            # /api/files/workflow/output/path/to/file.png
+            parts = path.split('/api/files/workflow/')[1].split('/', 1)
+            if len(parts) >= 2:
+                folder_type = parts[0]
+                file_path = unquote(parts[1])
+                data = self.api.get_file_workflow(folder_type, file_path)
+                self.send_json(data)
+                return
+            self.send_json({'success': False, 'message': 'Invalid path'}, 400)
+            return
+        
+        if path.startswith('/api/files/serve/'):
+            # /api/files/serve/output/path/to/file.mp4 - serve actual file for video/audio playback
+            parts = path.split('/api/files/serve/')[1].split('/', 1)
+            if len(parts) >= 2:
+                folder_type = parts[0]
+                file_path = unquote(parts[1])
+                full_path, content_type, file_size = self.api.serve_file(folder_type, file_path)
+                if full_path:
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', content_type)
+                        self.send_header('Content-Length', str(file_size))
+                        self.send_header('Accept-Ranges', 'bytes')
+                        self.end_headers()
+                        with open(full_path, 'rb') as f:
+                            # Stream file in chunks for large files
+                            chunk_size = 64 * 1024  # 64KB chunks
+                            while True:
+                                chunk = f.read(chunk_size)
+                                if not chunk:
+                                    break
+                                self.wfile.write(chunk)
+                        return
+                    except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                        return  # Client disconnected
+            self.send_error(404, 'File not found')
+            return
+        
+        # Usage Analytics
+        if path == '/api/usage/stats':
+            tracker = get_usage_tracker(self.api.comfy_root)
+            # Build node-to-package mapping from installed nodes
+            nodes = self.api.get_nodes().get('nodes', [])
+            tracker.build_node_package_map(nodes)
+            data = tracker.get_usage_stats()
+            self.send_json({'success': True, **data})
+            return
+        
+        if path == '/api/usage/progress':
+            tracker = get_usage_tracker(self.api.comfy_root)
+            progress = tracker.get_scan_progress()
+            self.send_json({'success': True, **progress})
+            return
+        
         # Serve static files
         if path == '/' or path == '':
             self.path = '/index.html'
         
-        return super().do_GET()
+        try:
+            return super().do_GET()
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass  # Client disconnected - ignore
     
     def do_POST(self):
         """Handle POST requests"""
@@ -1576,11 +2695,15 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
                 raw_body = self.rfile.read(content_length).decode('utf-8')
                 body = json.loads(raw_body)
             except json.JSONDecodeError as e:
-                print(f"[MF Conductor] JSON decode error: {e}")
+                log_msg = f"[MF Conductor] JSON decode error: {e}"
+                print(log_msg)
+                self.api.add_backend_log(log_msg, 'error')
                 self.send_json({'success': False, 'message': f'Invalid JSON: {str(e)}'}, 400)
                 return
             except Exception as e:
-                print(f"[MF Conductor] Body read error: {e}")
+                log_msg = f"[MF Conductor] Body read error: {e}"
+                print(log_msg)
+                self.api.add_backend_log(log_msg, 'error')
                 self.send_json({'success': False, 'message': f'Error reading request: {str(e)}'}, 400)
                 return
         
@@ -1663,10 +2786,11 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         
         if path == '/api/packages/upgrade':
             package_name = body.get('package_name', '')
+            version = body.get('version', None)  # Optional specific version
             if not package_name:
                 self.send_json({'success': False, 'message': 'Package name is required'}, 400)
                 return
-            data = self.api.upgrade_package(package_name)
+            data = self.api.upgrade_package(package_name, version)
             self.send_json(data)
             return
         
@@ -1676,6 +2800,24 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
                 self.send_json({'success': False, 'message': 'Package name is required'}, 400)
                 return
             data = self.api.reinstall_package(package_name)
+            self.send_json(data)
+            return
+        
+        # File Browser API
+        if path == '/api/files/delete':
+            folder_type = body.get('folder', 'output')
+            file_path = body.get('path', '')
+            if not file_path:
+                self.send_json({'success': False, 'message': 'File path is required'}, 400)
+                return
+            data = self.api.delete_file(folder_type, file_path)
+            self.send_json(data)
+            return
+        
+        if path == '/api/files/open-location':
+            folder_type = body.get('folder', 'output')
+            file_path = body.get('path', '')
+            data = self.api.open_file_location(folder_type, file_path)
             self.send_json(data)
             return
         
@@ -1691,10 +2833,19 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             if not hasattr(self.api, '_update_jobs'):
                 self.api._update_jobs = {}
             
+            # Clean up stale jobs older than 5 minutes
+            current_time = time.time()
+            stale_threshold = current_time - 300  # 5 minutes
+            stale_jobs = [jid for jid, job in self.api._update_jobs.items() 
+                         if job.get('created_at', 0) < stale_threshold]
+            for jid in stale_jobs:
+                del self.api._update_jobs[jid]
+            
             self.api._update_jobs[job_id] = {
                 'status': 'running',
                 'result': None,
-                'error': None
+                'error': None,
+                'created_at': current_time
             }
             
             def check_updates_background(job_id):
@@ -1827,6 +2978,30 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             merge = body.get('merge', False)
             data = self.api.import_backup(backup_data, merge)
             self.send_json(data)
+            return
+        
+        # Usage Analytics
+        if path == '/api/usage/scan':
+            tracker = get_usage_tracker(self.api.comfy_root)
+            # Build node-to-package mapping first
+            nodes = self.api.get_nodes().get('nodes', [])
+            tracker.build_node_package_map(nodes)
+            # Start scan in background thread
+            folders = body.get('folders', None)
+            force = body.get('force', False)
+            
+            def run_scan():
+                tracker.scan_workflows(folders, force)
+            
+            thread = threading.Thread(target=run_scan, daemon=True)
+            thread.start()
+            self.send_json({'success': True, 'message': 'Scan started'})
+            return
+        
+        if path == '/api/usage/clear':
+            tracker = get_usage_tracker(self.api.comfy_root)
+            tracker.clear_data()
+            self.send_json({'success': True, 'message': 'Usage data cleared'})
             return
         
         # Batch updates
