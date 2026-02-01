@@ -5,7 +5,23 @@ All notable changes to MF Conductor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - 2025-01-XX
+## [1.2.1] - 2026-02-01
+
+### Added
+- **Fast Start Node Loading**: Cached node list loads immediately with background refresh.
+- **Improved Metadata Extraction**: Better PNG/WebP workflow parsing and EXIF fallback handling.
+
+### Improved
+- **Disabled Node Detection**: Accurate handling of `.disabled` folders in the node list.
+- **Usage Analytics Mapping**: Node usage now maps correctly to packages.
+- **Package Update State**: Update flags reset cleanly between checks.
+
+### Fixed
+- Integrated mode: package update checks now handle immediate responses.
+- Integrated mode: missing profile endpoints for clear default and load presets.
+- Integrated mode: command execution is disabled for safety.
+
+## [1.2.0] - 2025-01-16
 
 ### Added
 - **Terminal History Persistence**: Terminal output now persists across page refreshes
@@ -22,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Check for updates progress and results
   - Install, upgrade, uninstall, and reinstall operations
   - Individual package update checks
+- **Auto-Generated Launcher**: Creates `Launch_MF_Conductor.bat` at portable root on first load
+  - Automatically regenerates if deleted
+  - Uses relative paths for portability across systems
+- **Tab Persistence**: Active tab is saved in URL hash and persists across page refreshes
+  - Supports browser back/forward navigation between tabs
 
 ### Improved
 - **UI Design**: Complete redesign with sidebar navigation and glassmorphism
@@ -38,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Properly sized icons (14px for buttons, 16px for requirements)
   - Fixed layout and styling issues
   - Restored expandable nodes list functionality
+- **Launch Performance**: Splash screen now loads in background without blocking launch
+- **Server Ready Detection**: Faster polling (500ms vs 2s) for quicker "Go to Comfy" availability
+- **Console Performance**: Optimized appending with batched DOM updates and requestAnimationFrame scrolling
+- **"Go to Comfy" Button**: Opens immediately without blocking status checks
 
 ### Fixed
 - Terminal no longer clears on page refresh
@@ -48,6 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - List header z-index fixed to prevent toolbar overlap when scrolling
 - Expanded node detail section styling and icon sizes
 - Package update check timeout issues resolved
+- **Race condition** in backend log buffer (now returns copy instead of slice reference)
+- **Memory leak** from unbounded console buffer (capped at 5000 lines)
+- **Path traversal vulnerability** in file serving endpoints (added path validation)
+- **Stale update jobs** now cleaned up automatically after timeout
+- **Event listener leak** in profile context menu (switched to event delegation)
+- **Profile launcher path** calculation corrected for generated shortcuts
+- **Missing import** for `refresh_installed_packages` in integrated mode
+- Replaced all bare `except:` clauses with proper `except Exception` for better debugging
 
 ## [1.1.0] - 2025-12-19
 

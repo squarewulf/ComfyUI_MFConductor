@@ -80,6 +80,7 @@ A clean, functional interface for the custom node ecosystem.
 * **GitHub Integration** - Direct links to repositories and star counts.
 * **Bulk Operations** - Update or disable multiple nodes simultaneously.
 * **Install from URL** - Direct Git repository installation support.
+* **Fast Start** - Cached node list loads instantly with background refresh.
 
 ### ❖ Live Console
 
@@ -143,6 +144,8 @@ Access directly within a running ComfyUI instance via the sidebar or URL:
 http://localhost:8188/mf_conductor/
 
 ```
+
+> **Note:** File browser and command execution are available only in standalone mode.
 
 ---
 
