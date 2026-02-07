@@ -90,7 +90,8 @@ class MFConductor {
         
         // Required nodes/packages - these are essential for ComfyUI to function
         this.requiredNodes = new Set([
-            'ComfyUI-Manager'  // Highly recommended for node management
+            'ComfyUI-Manager',       // Highly recommended for node management
+            'ComfyUI_MFConductor'    // Required - this is the manager itself
         ]);
         
         this.requiredPackages = new Set([
@@ -1391,6 +1392,9 @@ class MFConductor {
             this.profileSelectedNodes = new Set(this.nodes.map(n => n.folder_name));
         }
         
+        // Always ensure required nodes are included
+        this.requiredNodes.forEach(folder => this.profileSelectedNodes.add(folder));
+        
         // Initialize packages - all included by default (excluded_packages is what's NOT included)
         if (profile?.excluded_packages) {
             this.profileExcludedPackages = new Set(profile.excluded_packages);
@@ -1921,9 +1925,12 @@ class MFConductor {
         const avatarImg = document.getElementById('profile-avatar-preview');
         const avatar = avatarImg?.src || 'default.svg';
         
+        // Ensure required nodes are always enabled (MF_Conductor, ComfyUI-Manager, etc.)
+        this.requiredNodes.forEach(folder => this.profileSelectedNodes.add(folder));
+        
         const enabled = Array.from(this.profileSelectedNodes);
         const disabled = this.nodes
-            .filter(n => !this.profileSelectedNodes.has(n.folder_name))
+            .filter(n => !this.profileSelectedNodes.has(n.folder_name) && !this.requiredNodes.has(n.folder_name))
             .map(n => n.folder_name);
         
         const flags = this.getProfileEditorFlags();
@@ -6636,12 +6643,12 @@ class MFConductor {
             // Set icon type
             iconEl.className = `confirm-icon ${type}`;
             
-            // Set icon SVG based on type
+            // Set icon SVG based on type (explicit width/height for consistent sizing)
             const icons = {
-                info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
-                warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-                danger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
-                success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
+                info: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+                warning: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+                danger: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+                success: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
             };
             iconEl.innerHTML = icons[type] || icons.info;
             
@@ -9872,9 +9879,12 @@ class MFConductor {
     }
     
     async saveProfileAdvanced(name) {
+        // Ensure required nodes are always enabled
+        this.requiredNodes.forEach(folder => this.profileSelectedNodes.add(folder));
+        
         const enabled = Array.from(this.profileSelectedNodes);
         const disabled = this.nodes
-            .filter(n => !this.profileSelectedNodes.has(n.folder_name))
+            .filter(n => !this.profileSelectedNodes.has(n.folder_name) && !this.requiredNodes.has(n.folder_name))
             .map(n => n.folder_name);
         
         const flags = this.getSelectedFlags();

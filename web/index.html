@@ -6,24 +6,8 @@
     <title>MFConductor - Better Control. Better ComfyUI.</title>
     <link rel="icon" type="image/svg+xml" href="mfconductor_logo.svg">
     
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        'base': '#0f1115',
-                        'sidebar': '#161b22',
-                        'card': '#1e293b',
-                        'card-hover': '#283548',
-                        'border-subtle': 'rgba(255, 255, 255, 0.05)',
-                        'border-light': 'rgba(255, 255, 255, 0.1)',
-                    }
-                }
-            }
-        }
-    </script>
+    <!-- Tailwind CSS (built locally via Tailwind CLI; see package.json) -->
+    <link rel="stylesheet" href="tailwind.css?v=1.2.2">
     
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -33,8 +17,8 @@
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Custom styles for complex components -->
-    <link rel="stylesheet" href="style.css">
+    <!-- Custom styles / overrides -->
+    <link rel="stylesheet" href="style.css?v=1.2.2">
 </head>
 <body class="h-screen overflow-hidden flex bg-base text-slate-200 font-['Inter'] text-sm antialiased selection:bg-indigo-500 selection:text-white">
 
@@ -62,6 +46,11 @@
                    class="sidebar-link active flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
                     <i class="fa-solid fa-user w-5 text-center"></i>
                     <span>Profiles</span>
+                </a>
+                <a href="#" onclick="app.switchMainTab('files'); return false;" id="nav-files" 
+                   class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
+                    <i class="fa-solid fa-folder-open w-5 text-center"></i>
+                    <span>Files</span>
                 </a>
                 <a href="#" onclick="app.switchMainTab('nodes'); return false;" id="nav-nodes" 
                    class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
@@ -100,7 +89,7 @@
                 </button>
             </div>
             <div class="mt-2 flex items-center justify-center gap-1 text-[10px] text-slate-600">
-                <span>v1.2</span>
+                <span>v1.3.0</span>
                 <span>-</span>
                 <a href="https://friskcinema.com" target="_blank" class="hover:text-slate-400 transition-colors flex items-center gap-1">
                     <img src="mflogo.webp" alt="FriskCinema" class="h-3 w-3 rounded-sm opacity-50">
@@ -204,6 +193,110 @@
                 <div class="px-6 pb-6">
                     <div class="profiles-grid" id="profiles-grid">
                         <!-- Profile tiles will be injected here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Files Tab -->
+            <div class="tab-content hidden" id="tab-files">
+                <!-- Files Toolbar -->
+                <div class="toolbar sticky top-0 z-10 bg-base/95 backdrop-blur border-b border-border-subtle p-4">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <!-- Folder Selector -->
+                        <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
+                            <button class="btn-icon-glass folder-btn active rounded-none border-0" id="files-folder-output" data-folder="output" title="Output Folder">
+                                <img src="assets/out.svg" alt="Output" class="folder-icon">
+                            </button>
+                            <button class="btn-icon-glass folder-btn rounded-none border-0" id="files-folder-input" data-folder="input" title="Input Folder">
+                                <img src="assets/in.svg" alt="Input" class="folder-icon">
+                            </button>
+                            <button class="btn-icon-glass folder-btn rounded-none border-0" id="files-folder-both" data-folder="both" title="Both Folders">
+                                <img src="assets/inout.svg" alt="Both" class="folder-icon">
+                            </button>
+                        </div>
+                        
+                        <!-- Search -->
+                        <div class="relative flex-1 min-w-[200px] max-w-md">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
+                            <input type="text" class="input-glass w-full pl-10 pr-4" id="files-search" placeholder="Search files..." autocomplete="off">
+                        </div>
+                        
+                        <!-- Sort -->
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs text-slate-500">Sort:</label>
+                            <select class="select-glass" id="files-sort">
+                                <option value="date">Date Modified</option>
+                                <option value="name">Name</option>
+                                <option value="size">Size</option>
+                                <option value="type">Type</option>
+                                <option value="workflow">Workflow</option>
+                            </select>
+                            <button class="btn-icon-glass" id="files-sort-dir" title="Toggle sort direction">
+                                <i class="fa-solid fa-arrow-down-short-wide"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- Filter by Type -->
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs text-slate-500">Type:</label>
+                            <select class="select-glass" id="files-type-filter">
+                                <option value="">All</option>
+                                <option value="image">Images</option>
+                                <option value="video">Videos</option>
+                                <option value="audio">Audio</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        
+                        <!-- View Toggle -->
+                        <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
+                            <button class="btn-icon-glass view-btn active rounded-none border-0" id="files-view-grid" title="Grid View">
+                                <i class="fa-solid fa-th"></i>
+                            </button>
+                            <button class="btn-icon-glass view-btn rounded-none border-0" id="files-view-list" title="List View">
+                                <i class="fa-solid fa-list"></i>
+                            </button>
+                            <button class="btn-icon-glass view-btn rounded-none border-0" id="files-view-workflow" title="Group by Workflow">
+                                <i class="fa-solid fa-sitemap"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- Subfolder View Toggle -->
+                        <button class="btn-icon-glass" id="files-recursive-btn" title="Show All Files (include subfolders)">
+                            <i class="fa-solid fa-folder-tree"></i>
+                        </button>
+                        
+                        <!-- Actions -->
+                        <div class="flex items-center gap-2 ml-auto">
+                            <button class="btn-icon-glass" id="files-refresh-btn" title="Refresh">
+                                <i class="fa-solid fa-rotate"></i>
+                            </button>
+                            <button class="btn-icon-glass" id="files-open-folder-btn" title="Open in Explorer">
+                                <i class="fa-solid fa-folder-open"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Files Breadcrumb -->
+                <div class="px-6 pt-4 pb-2 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="text-lg font-semibold text-white" id="files-current-path">Output</span>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <span class="text-xs text-slate-500" id="files-count">0 files</span>
+                        <span class="text-xs text-slate-500" id="files-size">0 MB</span>
+                    </div>
+                </div>
+                
+                <!-- Files Grid/List -->
+                <div class="px-6 pb-6" id="files-container">
+                    <div class="files-grid" id="files-grid">
+                        <!-- File tiles will be injected here -->
+                        <div class="loading-state flex flex-col items-center justify-center py-20">
+                            <div class="loader mb-4"></div>
+                            <p class="text-slate-400">Loading files...</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -377,16 +470,22 @@
                             <span class="font-medium text-white">ComfyUI Terminal</span>
                             <span class="text-xs text-slate-500" id="terminal-status">Ready</span>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <button class="btn-icon-glass" id="console-clear-btn" title="Clear Terminal">
-                                <i class="fa-solid fa-trash"></i>
-                            </button>
-                            <button class="btn-icon-glass active" id="console-scroll-btn" title="Auto-scroll (enabled)" data-autoscroll="true">
-                                <i class="fa-solid fa-arrow-down"></i>
-                            </button>
-                            <button class="btn-icon-glass" id="console-copy-btn" title="Copy All">
-                                <i class="fa-regular fa-copy"></i>
-                            </button>
+                        <div class="flex items-center gap-3">
+                            <label class="console-checkbox flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                                <input type="checkbox" id="console-autoscroll-checkbox" checked class="accent-indigo-500">
+                                <span>Auto-scroll</span>
+                            </label>
+                            <div class="flex items-center gap-1 border-l border-border-subtle pl-3">
+                                <button class="btn-icon-glass w-7 h-7" id="console-clear-btn" title="Clear Terminal">
+                                    <i class="fa-solid fa-trash text-xs"></i>
+                                </button>
+                                <button class="btn-icon-glass w-7 h-7" id="console-copy-btn" title="Copy to Clipboard">
+                                    <i class="fa-regular fa-copy text-xs"></i>
+                                </button>
+                                <button class="btn-icon-glass w-7 h-7" id="console-export-btn" title="Export as .txt">
+                                    <i class="fa-solid fa-download text-xs"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                     
@@ -465,8 +564,8 @@
     <!-- Custom Confirm Modal -->
     <div class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm" id="confirm-modal">
         <div class="modal-content glass-panel w-full max-w-sm p-6 rounded-xl text-center">
-            <div class="confirm-icon text-4xl mb-4 text-amber-400" id="confirm-icon">
-                <i class="fa-solid fa-circle-exclamation"></i>
+            <div class="confirm-icon w-14 h-14 mx-auto mb-4 rounded-full flex items-center justify-center bg-amber-400/15 text-amber-400" id="confirm-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             </div>
             <div class="text-lg font-semibold text-white mb-2" id="confirm-title">Confirm Action</div>
             <div class="text-slate-400 mb-6" id="confirm-message">Are you sure?</div>
@@ -491,47 +590,47 @@
     </div>
 
     <!-- Profile Editor -->
-    <div class="profile-editor-overlay fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm" id="profile-editor">
-        <div class="profile-editor glass-panel absolute inset-4 lg:inset-8 rounded-xl flex flex-col overflow-hidden">
-            <div class="profile-editor-header flex items-center justify-between p-4 border-b border-border-subtle">
-                <h2 class="text-lg font-semibold text-white" id="profile-editor-title">Create Profile</h2>
-                <button class="btn-icon-glass" onclick="app.closeProfileEditor()">
-                    <i class="fa-solid fa-xmark"></i>
+    <div class="profile-editor-overlay fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center" id="profile-editor">
+        <div class="profile-editor glass-panel w-full max-w-4xl max-h-[85vh] mx-4 rounded-xl flex flex-col overflow-hidden">
+            <div class="profile-editor-header flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+                <h2 class="text-base font-semibold text-white" id="profile-editor-title">Create Profile</h2>
+                <button class="btn-icon-glass w-8 h-8" onclick="app.closeProfileEditor()">
+                    <i class="fa-solid fa-xmark text-sm"></i>
                 </button>
             </div>
-            <div class="profile-editor-body flex-1 overflow-y-auto p-6">
+            <div class="profile-editor-body flex-1 overflow-y-auto p-4">
                 <!-- Profile Info Section -->
-                <div class="profile-editor-section mb-6">
-                    <h3 class="text-sm font-medium text-slate-400 mb-4">Profile Info</h3>
-                    <div class="flex items-start gap-6">
+                <div class="profile-editor-section mb-4">
+                    <h3 class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Profile Info</h3>
+                    <div class="flex items-start gap-4">
                         <div class="profile-avatar-picker flex flex-col items-center gap-2">
-                            <img src="default.svg" alt="Profile Avatar" id="profile-avatar-preview" class="w-20 h-20 rounded-xl bg-card object-cover">
-                            <button class="btn-glass btn-sm" onclick="app.pickProfileAvatar()">Change Icon</button>
+                            <img src="default.svg" alt="Profile Avatar" id="profile-avatar-preview" class="w-14 h-14 rounded-lg bg-card object-cover">
+                            <button class="btn-glass text-xs px-2 py-1" onclick="app.pickProfileAvatar()">Change</button>
                             <input type="file" id="profile-avatar-input" accept="image/*" class="hidden">
                         </div>
-                        <div class="flex-1 space-y-4">
+                        <div class="flex-1 space-y-3">
                             <div>
-                                <label for="profile-name-input" class="block text-sm text-slate-400 mb-1">Profile Name</label>
-                                <input type="text" id="profile-name-input" class="input-glass w-full" placeholder="My Profile">
+                                <label for="profile-name-input" class="block text-xs text-slate-400 mb-1">Profile Name</label>
+                                <input type="text" id="profile-name-input" class="input-glass w-full text-sm" placeholder="My Profile">
                             </div>
                             <div>
-                                <label for="profile-desc-input" class="block text-sm text-slate-400 mb-1">Description (optional)</label>
-                                <input type="text" id="profile-desc-input" class="input-glass w-full" placeholder="A brief description...">
+                                <label for="profile-desc-input" class="block text-xs text-slate-400 mb-1">Description (optional)</label>
+                                <input type="text" id="profile-desc-input" class="input-glass w-full text-sm" placeholder="A brief description...">
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Profile Editor Tabs -->
-                <div class="profile-editor-tabs flex gap-1 mb-4 border-b border-border-subtle">
-                    <button class="profile-editor-tab active px-4 py-2 text-sm font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="nodes">Nodes</button>
-                    <button class="profile-editor-tab px-4 py-2 text-sm font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="packages">Packages</button>
-                    <button class="profile-editor-tab px-4 py-2 text-sm font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="flags">Launch Flags</button>
+                <div class="profile-editor-tabs flex gap-1 mb-3 border-b border-border-subtle">
+                    <button class="profile-editor-tab active px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="nodes">Nodes</button>
+                    <button class="profile-editor-tab px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="packages">Packages</button>
+                    <button class="profile-editor-tab px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white border-b-2 border-transparent transition-all" data-tab="flags">Launch Flags</button>
                 </div>
 
                 <!-- Nodes Tab -->
                 <div class="profile-editor-tab-content active" id="pe-tab-nodes">
-                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-4 h-[400px]">
+                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-3 h-[280px]">
                         <div class="nodes-panel-left flex flex-col bg-card/50 rounded-lg border border-border-subtle overflow-hidden">
                             <div class="panel-header flex items-center justify-between p-3 border-b border-border-subtle">
                                 <span class="text-sm font-medium text-slate-300">Excluded Nodes</span>
@@ -571,7 +670,7 @@
 
                 <!-- Packages Tab -->
                 <div class="profile-editor-tab-content hidden" id="pe-tab-packages">
-                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-4 h-[400px]">
+                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-3 h-[280px]">
                         <div class="nodes-panel-left flex flex-col bg-card/50 rounded-lg border border-border-subtle overflow-hidden">
                             <div class="panel-header flex items-center justify-between p-3 border-b border-border-subtle">
                                 <span class="text-sm font-medium text-slate-300">Excluded Packages</span>
@@ -611,7 +710,7 @@
 
                 <!-- Flags Tab -->
                 <div class="profile-editor-tab-content hidden" id="pe-tab-flags">
-                    <div class="flags-grid grid grid-cols-2 lg:grid-cols-3 gap-4" id="pe-flags-grid">
+                    <div class="flags-grid grid grid-cols-2 lg:grid-cols-3 gap-3 max-h-[280px] overflow-y-auto" id="pe-flags-grid">
                         <!-- VRAM Management -->
                         <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
                             <div class="text-sm font-medium text-white mb-3">VRAM Management</div>
@@ -701,15 +800,16 @@
                     </div>
                 </div>
             </div>
-            <div class="profile-editor-footer flex items-center justify-between p-4 border-t border-border-subtle bg-sidebar">
-                <button class="btn-glass btn-danger hidden" id="profile-delete-btn" onclick="app.deleteCurrentProfile()">
+            <div class="profile-editor-footer flex items-center justify-between p-3 border-t border-border-subtle bg-sidebar">
+                <button class="btn-glass btn-danger btn-sm hidden" id="profile-delete-btn" onclick="app.deleteCurrentProfile()">
                     <i class="fa-solid fa-trash"></i>
-                    Delete Profile
+                    Delete
                 </button>
-                <div class="ml-auto">
-                    <button class="btn-primary-glass" onclick="app.saveProfile()">
-                        <i class="fa-solid fa-floppy-disk"></i>
-                        Save Profile
+                <div class="ml-auto flex items-center gap-2">
+                    <button class="btn-glass btn-sm" onclick="app.closeProfileEditor()">Cancel</button>
+                    <button class="btn-primary btn-sm" onclick="app.saveProfile()">
+                        <i class="fa-solid fa-check"></i>
+                        Save
                     </button>
                 </div>
             </div>
@@ -1053,6 +1153,16 @@
                     <p class="text-xs text-slate-600 mt-2">Tip: Right-click any profile to create a quick launch shortcut</p>
                 </div>
                 
+                <!-- Usage Analytics Section -->
+                <div class="settings-section">
+                    <h3 class="text-sm font-semibold text-white mb-4">Usage Analytics</h3>
+                    <p class="text-xs text-slate-500 mb-3">Analyze which custom nodes you actually use to optimize startup time</p>
+                    <button class="btn-glass" onclick="app.openUsageModal()">
+                        <i class="fa-solid fa-chart-bar"></i>
+                        View Usage Analytics
+                    </button>
+                </div>
+                
                 <!-- Data Section -->
                 <div class="settings-section">
                     <h3 class="text-sm font-semibold text-white mb-4">Data</h3>
@@ -1138,9 +1248,52 @@
         </div>
     </div>
 
+    <!-- Usage Analytics Modal -->
+    <div class="modal-overlay" id="usage-modal">
+        <div class="modal-content" style="max-width: 900px; max-height: 85vh;">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <i class="fa-solid fa-chart-bar"></i>
+                    <span>Usage Analytics</span>
+                </div>
+                <button class="modal-close" onclick="app.closeUsageModal()">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="modal-body" style="overflow-y: auto; max-height: calc(85vh - 120px);">
+                <div class="usage-stats-container" id="usage-stats-container">
+                    <!-- Stats will be populated by JS -->
+                    <div class="text-center py-8">
+                        <i class="fa-solid fa-chart-bar text-4xl text-slate-600 mb-4"></i>
+                        <p class="text-slate-400">Scan your workflows to see usage statistics</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer flex items-center justify-between p-4 border-t border-border-subtle">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-500" id="usage-last-scan">Never scanned</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button class="btn-glass btn-danger text-xs" onclick="app.clearUsageData()" id="usage-clear-btn">
+                        <i class="fa-solid fa-trash"></i>
+                        Clear Data
+                    </button>
+                    <button class="btn-glass text-xs" onclick="app.scanUsage(true)" id="usage-rescan-btn">
+                        <i class="fa-solid fa-rotate"></i>
+                        Full Rescan
+                    </button>
+                    <button class="btn-primary-glass" onclick="app.scanUsage()" id="usage-scan-btn">
+                        <i class="fa-solid fa-magnifying-glass-chart"></i>
+                        Scan Workflows
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Console Panel (Bottom) -->
-    <div class="console-panel fixed bottom-0 left-64 right-0 z-30 bg-sidebar border-t border-border-subtle transition-all duration-300 collapsed" id="console-panel">
-        <div class="console-resize-handle absolute top-0 left-0 right-0 h-1 cursor-ns-resize bg-transparent hover:bg-indigo-500/50 transition-colors" id="console-resize-handle"></div>
+    <div class="console-panel fixed bottom-0 left-64 right-0 z-30 bg-sidebar border-t border-border-subtle collapsed" id="console-panel">
+        <div class="console-resize-handle absolute top-0 left-0 right-0 h-1 cursor-ns-resize bg-transparent hover:bg-indigo-500/50" id="console-resize-handle"></div>
         <div class="console-header flex items-center justify-between px-4 py-2 cursor-pointer" id="console-header">
             <div class="flex items-center gap-2">
                 <i class="fa-solid fa-terminal text-indigo-400 text-xs"></i>
@@ -1156,7 +1309,7 @@
                 </button>
             </div>
         </div>
-        <div class="console-body overflow-hidden transition-all duration-300" id="console-body" style="height: 0px;">
+        <div class="console-body overflow-hidden" id="console-body" style="height: 0px;">
             <div class="console-content h-full overflow-y-auto p-3 font-mono text-xs bg-black/30" id="console-content">
                 <div class="console-welcome text-slate-500">
                     <span class="text-slate-600">[System]</span>
@@ -1166,6 +1319,6 @@
         </div>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=1.2.2"></script>
 </body>
 </html>

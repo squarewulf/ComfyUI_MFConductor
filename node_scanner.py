@@ -1200,6 +1200,15 @@ class NodeScanner:
         except Exception:
             return None
     
+    def _invalidate_cache(self):
+        """Clear in-memory node list and delete the on-disk cache file"""
+        self.nodes = []
+        try:
+            if self._cache_file.exists():
+                self._cache_file.unlink()
+        except Exception:
+            pass
+
     def get_node_by_folder(self, folder_name: str) -> Optional[Dict[str, Any]]:
         """Get a specific node by its folder name"""
         for node in self.nodes:
@@ -1222,17 +1231,15 @@ class NodeScanner:
         
         # Safety check - make sure it's in custom_nodes
         try:
-            target_resolved = target_path.resolve()
-            custom_resolved = self.custom_nodes_path.resolve()
-            if not str(target_resolved).startswith(str(custom_resolved)):
-                return False, "Security error: Invalid path"
+            target_path.resolve().relative_to(self.custom_nodes_path.resolve())
+        except ValueError:
+            return False, "Security error: Invalid path"
         except Exception as e:
             return False, f"Path error: {e}"
         
         try:
             shutil.rmtree(str(target_path))
-            # Clear cache
-            self._cached_nodes = None
+            self._invalidate_cache()
             return True, f"Successfully removed {folder_name}"
         except PermissionError:
             return False, f"Permission denied. Close any applications using files in {folder_name}"
@@ -1252,8 +1259,7 @@ class NodeScanner:
         
         try:
             target_path.rename(disabled_path)
-            # Clear cache
-            self._cached_nodes = None
+            self._invalidate_cache()
             return True, f"Deactivated {folder_name} (renamed to {folder_name}.disabled)"
         except PermissionError:
             return False, f"Permission denied. Close any applications using files in {folder_name}"
@@ -1280,8 +1286,7 @@ class NodeScanner:
         
         try:
             disabled_path.rename(active_path)
-            # Clear cache
-            self._cached_nodes = None
+            self._invalidate_cache()
             return True, f"Activated {active_name}"
         except PermissionError:
             return False, f"Permission denied. Close any applications using files in {disabled_path.name}"
@@ -1550,8 +1555,7 @@ class NodeScanner:
             req_file = node_path / 'requirements.txt'
             if req_file.exists():
                 try:
-                    from . import requirements_checker
-                    reqs = requirements_checker.get_node_requirements(node.folder_name, str(self.custom_nodes_path))
+                    reqs = get_node_requirements(node_path)
                     missing = [r for r in reqs if r.get('status') == 'missing']
                     if missing:
                         issues.append(f"Missing {len(missing)} required packages")

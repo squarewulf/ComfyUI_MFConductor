@@ -43,8 +43,9 @@ class MFConductorAPI:
         # ComfyUI process management
         self.comfy_process = None
         self.comfy_output_buffer = []
-        self.comfy_output_index = 0  # Track what output has been sent to client
+        self.comfy_output_index = 0
         self.output_lock = threading.Lock()
+        self.active_profile_name = None
         
         # Backend log buffer for frontend console
         self.backend_logs = []
@@ -462,14 +463,8 @@ class MFConductorAPI:
         profiles_dir.mkdir(exist_ok=True)
         bat_path = profiles_dir / f'{name}.bat'
         
-        # Build command line flags
-        flags = []
-        for key, value in (profile.get('flags') or {}).items():
-            if value:
-                flags.append(value)
-        if profile.get('custom_flags'):
-            flags.append(profile.get('custom_flags'))
-        
+        # Build command line flags using the shared helper
+        flags = self._build_comfy_args_from_profile(profile)
         flags_str = ' '.join(flags)
         
         # Find ComfyUI run script
@@ -1688,7 +1683,7 @@ class MFConductorAPI:
             folder_path = self.get_comfy_folder_path(folder_type)
             
             if file_path:
-                full_path = folder_path / file_path
+                full_path = self._validate_file_path(folder_type, file_path)
                 if full_path.exists():
                     if full_path.is_file():
                         folder_path = full_path.parent
@@ -1706,6 +1701,8 @@ class MFConductorAPI:
                 subprocess.run(['xdg-open', str(folder_path)])
             
             return {'success': True, 'message': 'Folder opened'}
+        except ValueError:
+            return {'success': False, 'message': 'Invalid path'}
         except Exception as e:
             return {'success': False, 'message': str(e)}
     
@@ -1753,7 +1750,12 @@ class MFConductorAPI:
         if self.comfy_process is not None:
             poll = self.comfy_process.poll()
             if poll is None:
-                return {'success': True, 'status': 'running', 'managed': True}
+                return {
+                    'success': True,
+                    'status': 'running',
+                    'managed': True,
+                    'active_profile': self.active_profile_name
+                }
             else:
                 # Process ended
                 self.comfy_process = None
@@ -1837,17 +1839,13 @@ class MFConductorAPI:
         if python_path is None:
             return {'success': False, 'message': 'Could not find Python executable'}
         
-        # Build flags from profile
+        # Build flags from profile using the shared helper
         flags = []
         if profile_name:
             user_data = get_user_data()
             profile = user_data.get_profile(profile_name)
             if profile:
-                for key, value in (profile.get('flags') or {}).items():
-                    if value:
-                        flags.append(value)
-                if profile.get('custom_flags'):
-                    flags.extend(profile.get('custom_flags').split())
+                flags = self._build_comfy_args_from_profile(profile)
         
         # Build command
         main_script = comfy_root / 'main.py'
@@ -1886,6 +1884,9 @@ class MFConductorAPI:
                 env=env,
                 creationflags=creation_flags
             )
+            
+            # Track which profile was used for this launch
+            self.active_profile_name = profile_name
             
             # Start output reader thread
             reader_thread = threading.Thread(target=self._read_comfy_output, daemon=True)
@@ -2026,15 +2027,9 @@ class MFConductorAPI:
             return {'success': False, 'message': str(e)}
     
     def restart_comfy(self) -> dict:
-        """Restart ComfyUI"""
-        # Get current profile from settings or use default
-        profile_name = None
-        user_data = get_user_data()
-        profiles = user_data.get_profiles()
-        for name, profile in profiles.items():
-            if profile.get('is_default'):
-                profile_name = name
-                break
+        """Restart ComfyUI using the same profile it was launched with"""
+        # Use the profile that was active when ComfyUI was last launched
+        profile_name = self.active_profile_name
         
         # Stop if running
         if self.comfy_process is not None and self.comfy_process.poll() is None:
@@ -2042,11 +2037,13 @@ class MFConductorAPI:
             if not stop_result['success']:
                 return stop_result
         
-        # Launch again
+        # Launch again with the same profile
         return self.launch_comfy(profile_name)
     
+    _ALLOWED_PYTHON_MODULES = {'pip', 'ensurepip', 'site', 'sysconfig'}
+
     def run_python_command(self, command: str) -> dict:
-        """Run a Python command in the ComfyUI environment"""
+        """Run a Python command in the ComfyUI environment (pip operations only)"""
         # Find Python executable
         comfy_root = Path(__file__).parent.parent.parent
         portable_root = comfy_root.parent
@@ -2055,8 +2052,14 @@ class MFConductorAPI:
         if not python_path.exists():
             python_path = Path(sys.executable)
         
-        # Split command into parts
+        # Split command into parts and validate the target module
         cmd_parts = command.split()
+        if not cmd_parts:
+            return {'success': False, 'message': 'Empty command'}
+        
+        module_name = cmd_parts[0]
+        if module_name not in self._ALLOWED_PYTHON_MODULES:
+            return {'success': False, 'message': f'Module "{module_name}" is not allowed. Permitted: {", ".join(sorted(self._ALLOWED_PYTHON_MODULES))}'}
         
         try:
             result = subprocess.run(
@@ -2078,6 +2081,11 @@ class MFConductorAPI:
         except Exception as e:
             return {'success': False, 'message': str(e)}
     
+    @staticmethod
+    def _escape_ps_string(value: str) -> str:
+        """Escape a string for safe embedding inside a PowerShell double-quoted string."""
+        return value.replace('`', '``').replace('"', '`"').replace('$', '`$')
+
     def create_conductor_shortcut(self, save_path: str = None) -> dict:
         """Create a shortcut to launch MF Conductor standalone server"""
         try:
@@ -2096,14 +2104,17 @@ class MFConductorAPI:
             conductor_dir = Path(__file__).parent
             batch_file = conductor_dir / 'Launch_MFConductor.bat'
             icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
-            icon_line = f'$Shortcut.IconLocation = "{icon_path}"' if icon_path.exists() else ''
+            icon_line = f'$Shortcut.IconLocation = "{self._escape_ps_string(str(icon_path))}"' if icon_path.exists() else ''
             
-            # Use PowerShell to create the shortcut
+            ps_save = self._escape_ps_string(save_path)
+            ps_batch = self._escape_ps_string(str(batch_file))
+            ps_cdir = self._escape_ps_string(str(conductor_dir))
+            
             ps_script = f'''
 $WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("{save_path}")
-$Shortcut.TargetPath = "{batch_file}"
-$Shortcut.WorkingDirectory = "{conductor_dir}"
+$Shortcut = $WshShell.CreateShortcut("{ps_save}")
+$Shortcut.TargetPath = "{ps_batch}"
+$Shortcut.WorkingDirectory = "{ps_cdir}"
 $Shortcut.Description = "Launch MF Conductor - ComfyUI Control Center"
 {icon_line}
 $Shortcut.Save()
@@ -2254,14 +2265,19 @@ if __name__ == '__main__':
             
             # Use PowerShell to create the shortcut with MF Conductor icon
             icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
-            icon_line = f'$Shortcut.IconLocation = "{icon_path}"' if icon_path.exists() else ''
+            icon_line = f'$Shortcut.IconLocation = "{self._escape_ps_string(str(icon_path))}"' if icon_path.exists() else ''
+            
+            ps_save = self._escape_ps_string(save_path)
+            ps_batch = self._escape_ps_string(str(batch_file))
+            ps_croot = self._escape_ps_string(str(comfy_root))
+            ps_pname = self._escape_ps_string(profile_name)
             
             ps_script = f'''
 $WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("{save_path}")
-$Shortcut.TargetPath = "{batch_file}"
-$Shortcut.WorkingDirectory = "{comfy_root}"
-$Shortcut.Description = "Launch ComfyUI with {profile_name} profile"
+$Shortcut = $WshShell.CreateShortcut("{ps_save}")
+$Shortcut.TargetPath = "{ps_batch}"
+$Shortcut.WorkingDirectory = "{ps_croot}"
+$Shortcut.Description = "Launch ComfyUI with {ps_pname} profile"
 {icon_line}
 $Shortcut.Save()
 '''
@@ -3083,12 +3099,13 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             try:
                 # Use PowerShell to show a native Save File dialog
                 desktop = str(Path.home() / 'Desktop')
+                esc = MFConductorAPI._escape_ps_string
                 ps_script = f'''
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.SaveFileDialog
-$dialog.InitialDirectory = "{desktop}"
+$dialog.InitialDirectory = "{esc(desktop)}"
 $dialog.Filter = "Windows Shortcut (*.lnk)|*.lnk"
-$dialog.FileName = "{suggested_name}"
+$dialog.FileName = "{esc(suggested_name)}"
 $dialog.Title = "Save Shortcut"
 $result = $dialog.ShowDialog()
 if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{

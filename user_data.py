@@ -5,6 +5,7 @@ Handles favorites, tags, notes, profiles, and user preferences
 
 import json
 import os
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -20,6 +21,7 @@ class UserDataManager:
             self.data_dir = Path(__file__).parent / 'data'
         
         self.data_dir.mkdir(exist_ok=True)
+        self._lock = threading.Lock()
         
         # File paths
         self.favorites_file = self.data_dir / 'favorites.json'
@@ -56,12 +58,15 @@ class UserDataManager:
         return default
     
     def _save_json(self, path: Path, data: Any):
-        """Save data to JSON file"""
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-        except IOError as e:
-            print(f"[MF Conductor] Error saving {path}: {e}")
+        """Save data to JSON file (thread-safe with atomic write)"""
+        with self._lock:
+            try:
+                tmp_path = path.with_suffix('.tmp')
+                with open(tmp_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                tmp_path.replace(path)
+            except IOError as e:
+                print(f"[MF Conductor] Error saving {path}: {e}")
     
     def _create_default_profiles(self):
         """Create default starter profiles"""
@@ -426,12 +431,21 @@ class UserDataManager:
         """Get a specific profile"""
         return self._profiles.get(name)
     
+    # Nodes that must always be enabled in profiles
+    REQUIRED_NODES = {'ComfyUI_MFConductor', 'ComfyUI-Manager'}
+    
     def save_profile(self, name: str, enabled_nodes: List[str], disabled_nodes: List[str], 
                      flags: Optional[Dict[str, str]] = None, custom_flags: str = '',
                      custom_flags_list: Optional[List] = None,
                      excluded_packages: Optional[List[str]] = None,
                      description: str = '', avatar: str = 'default.svg') -> None:
         """Save a profile (list of enabled/disabled nodes with optional flags)"""
+        # Ensure required nodes are always enabled and never disabled
+        enabled_set = set(enabled_nodes)
+        enabled_set.update(self.REQUIRED_NODES)
+        enabled_nodes = list(enabled_set)
+        disabled_nodes = [n for n in disabled_nodes if n not in self.REQUIRED_NODES]
+        
         existing = self._profiles.get(name, {})
         self._profiles[name] = {
             'enabled': enabled_nodes,
