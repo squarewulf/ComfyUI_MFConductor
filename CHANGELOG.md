@@ -5,6 +5,33 @@ All notable changes to MF Conductor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-02-07
+
+### Fixed
+- Async handlers no longer block the event loop during node scanning, git, and pip operations
+- Cache invalidation now properly clears stale node data
+- `detect_broken_nodes` no longer fails from missing module import
+- Exception handler NameError in PyPI update checks
+- Restart now reuses the active profile instead of falling back to default
+- `launch_comfy` and `launch_profile` no longer silently ignore `custom_flags_list`
+- Removed duplicate package install endpoint
+- Thread-safe singleton initialization and atomic JSON file writes
+
+### Security
+- Path traversal validation added to file location opener
+- Improved path traversal check in node removal (uses `pathlib.relative_to`)
+- User input escaped in PowerShell shortcut/dialog scripts to prevent injection
+- `run_python_command` restricted to allowlisted modules only
+- SSL certificate verification re-enabled for PyPI requests
+
+### Added
+- `api_core.py` shared business logic module
+- `shortcut_utils.py` cross-platform shortcut creation
+- Modular frontend JS (`web/js/` - api, console, modal, toast, utils, websocket)
+- SVG assets for file browser
+- Tailwind CSS build tooling
+- Architecture and submission documentation
+
 ## [1.2.1] - 2026-02-01
 
 ### Added
