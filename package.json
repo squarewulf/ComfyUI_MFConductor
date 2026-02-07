@@ -1,0 +1,17 @@
+{
+  "name": "mfconductor-web",
+  "private": true,
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  },
+  "scripts": {
+    "build:tailwind": "tailwindcss -c tailwind.config.cjs -i web/tailwind.input.css -o web/tailwind.css --minify"
+  }
+}
+
+
+
+
+
+
+

@@ -8,6 +8,7 @@ print("[MF Conductor] Loading...")
 import os
 import sys
 import json
+import asyncio
 import threading
 from pathlib import Path
 from aiohttp import web
@@ -67,29 +68,36 @@ except Exception as e:
 _scanner = None
 _git = None
 _pip = None
+_init_lock = threading.Lock()
 
 def get_scanner():
     global _scanner
     if _scanner is None:
-        if NodeScanner is None:
-            raise RuntimeError("NodeScanner module not loaded")
-        _scanner = NodeScanner()
+        with _init_lock:
+            if _scanner is None:
+                if NodeScanner is None:
+                    raise RuntimeError("NodeScanner module not loaded")
+                _scanner = NodeScanner()
     return _scanner
 
 def get_git():
     global _git
     if _git is None:
-        if GitUtils is None:
-            raise RuntimeError("GitUtils module not loaded")
-        _git = GitUtils()
+        with _init_lock:
+            if _git is None:
+                if GitUtils is None:
+                    raise RuntimeError("GitUtils module not loaded")
+                _git = GitUtils()
     return _git
 
 def get_pip():
     global _pip
     if _pip is None:
-        if PipUtils is None:
-            raise RuntimeError("PipUtils module not loaded")
-        _pip = PipUtils()
+        with _init_lock:
+            if _pip is None:
+                if PipUtils is None:
+                    raise RuntimeError("PipUtils module not loaded")
+                _pip = PipUtils()
     return _pip
 
 
@@ -175,7 +183,8 @@ async def api_get_nodes(request):
                     'cache_used': True,
                     'cache_stale': stale
                 })
-        nodes = scanner.scan(use_cache=True)
+        loop = asyncio.get_event_loop()
+        nodes = await loop.run_in_executor(None, lambda: scanner.scan(use_cache=True))
         
         from datetime import datetime
         return web.json_response({
@@ -192,7 +201,8 @@ async def api_refresh_nodes(request):
     """Force refresh the node list"""
     try:
         scanner = get_scanner()
-        nodes = scanner.refresh()
+        loop = asyncio.get_event_loop()
+        nodes = await loop.run_in_executor(None, scanner.refresh)
         
         from datetime import datetime
         return web.json_response({
@@ -213,7 +223,8 @@ async def api_update_node(request):
             return web.json_response({'success': False, 'message': 'Folder name required'}, status=400)
         
         git = get_git()
-        success, message = git.pull_updates(folder_name)
+        loop = asyncio.get_event_loop()
+        success, message = await loop.run_in_executor(None, git.pull_updates, folder_name)
         
         return web.json_response({'success': success, 'message': message})
     except Exception as e:
@@ -235,9 +246,10 @@ async def api_install_node(request):
         git = get_git()
         pip = get_pip()
         scanner = get_scanner()
+        loop = asyncio.get_event_loop()
         
         # Clone repository
-        success, message = git.clone_repo(url, folder_name)
+        success, message = await loop.run_in_executor(None, git.clone_repo, url, folder_name)
         
         if not success:
             return web.json_response({'success': False, 'message': message})
@@ -252,14 +264,14 @@ async def api_install_node(request):
         if install_deps:
             req_path = scanner.custom_nodes_path / folder_name / 'requirements.txt'
             if req_path.exists():
-                pip_success, pip_msg = pip.install_requirements(
-                    str(scanner.custom_nodes_path / folder_name)
+                pip_success, pip_msg = await loop.run_in_executor(
+                    None, pip.install_requirements, str(scanner.custom_nodes_path / folder_name)
                 )
                 if not pip_success:
                     message += f" (Warning: {pip_msg})"
         
         # Refresh cache
-        scanner.refresh()
+        await loop.run_in_executor(None, scanner.refresh)
         
         return web.json_response({'success': True, 'message': message, 'folder_name': folder_name})
     except Exception as e:
@@ -300,7 +312,8 @@ async def api_remove_node(request):
             return web.json_response({'success': False, 'message': 'Folder name required'}, status=400)
         
         scanner = get_scanner()
-        success, message = scanner.remove_node(folder_name)
+        loop = asyncio.get_event_loop()
+        success, message = await loop.run_in_executor(None, scanner.remove_node, folder_name)
         
         return web.json_response({'success': success, 'message': message})
     except Exception as e:
@@ -315,7 +328,8 @@ async def api_deactivate_node(request):
             return web.json_response({'success': False, 'message': 'Folder name required'}, status=400)
         
         scanner = get_scanner()
-        success, message = scanner.deactivate_node(folder_name)
+        loop = asyncio.get_event_loop()
+        success, message = await loop.run_in_executor(None, scanner.deactivate_node, folder_name)
         
         return web.json_response({'success': success, 'message': message})
     except Exception as e:
@@ -330,7 +344,8 @@ async def api_activate_node(request):
             return web.json_response({'success': False, 'message': 'Folder name required'}, status=400)
         
         scanner = get_scanner()
-        success, message = scanner.activate_node(folder_name)
+        loop = asyncio.get_event_loop()
+        success, message = await loop.run_in_executor(None, scanner.activate_node, folder_name)
         
         return web.json_response({'success': success, 'message': message})
     except Exception as e:
@@ -461,36 +476,6 @@ try:
             })
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e), 'requirements': []}, status=500)
-    
-    @routes.post('/mf_conductor/api/install-package')
-    async def _mnf_install_package(request):
-        try:
-            data = await request.json()
-            package_name = (data.get('package_name') or '').strip()
-            if not package_name:
-                return web.json_response({'success': False, 'message': 'Package name required'}, status=400)
-            
-            import subprocess
-            pip = get_pip()
-            
-            result = subprocess.run(
-                [pip.python_path, '-m', 'pip', 'install', package_name],
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
-            
-            if refresh_installed_packages:
-                refresh_installed_packages()
-            
-            if result.returncode == 0:
-                return web.json_response({'success': True, 'message': f'Successfully installed {package_name}'})
-            else:
-                return web.json_response({'success': False, 'message': f'Installation failed: {result.stderr}'})
-        except subprocess.TimeoutExpired:
-            return web.json_response({'success': False, 'message': 'Installation timed out'})
-        except Exception as e:
-            return web.json_response({'success': False, 'message': str(e)}, status=500)
     
     # ==================== USER DATA ROUTES ====================
     
@@ -636,40 +621,37 @@ try:
                 return web.json_response({'success': False, 'message': 'Profile not found'})
             
             scanner = get_scanner()
-            results = {'enabled': [], 'disabled': [], 'errors': []}
             
-            enabled_list = profile.get('enabled', [])
-            disabled_list = profile.get('disabled', [])
-            
-            # Get all node folders
-            all_nodes = scanner.scan()
-            all_folders = [n['folder_name'] for n in all_nodes]
-            
-            # If enabled list is empty, treat as "all nodes enabled"
-            if not enabled_list and not disabled_list:
-                # Empty lists = use all nodes (enable everything)
-                for folder in all_folders:
-                    success, msg = scanner.activate_node(folder)
-                    if success:
-                        results['enabled'].append(folder)
-            else:
-                # Specific selection - enable only selected, disable others
-                enabled_set = set(enabled_list) if enabled_list else set(all_folders)
-                
-                for folder in all_folders:
-                    if folder in enabled_set:
-                        success, msg = scanner.activate_node(folder)
-                        if success:
+            def _apply():
+                results = {'enabled': [], 'disabled': [], 'errors': []}
+                enabled_list = profile.get('enabled', [])
+                disabled_list = profile.get('disabled', [])
+                all_nodes = scanner.scan()
+                all_folders = [n['folder_name'] for n in all_nodes]
+                if not enabled_list and not disabled_list:
+                    for folder in all_folders:
+                        ok, msg = scanner.activate_node(folder)
+                        if ok:
                             results['enabled'].append(folder)
-                        elif 'already' not in msg.lower():
-                            results['errors'].append(f"{folder}: {msg}")
-                    else:
-                        success, msg = scanner.deactivate_node(folder)
-                        if success:
-                            results['disabled'].append(folder)
-                        elif 'already' not in msg.lower():
-                            results['errors'].append(f"{folder}: {msg}")
+                else:
+                    enabled_set = set(enabled_list) if enabled_list else set(all_folders)
+                    for folder in all_folders:
+                        if folder in enabled_set:
+                            ok, msg = scanner.activate_node(folder)
+                            if ok:
+                                results['enabled'].append(folder)
+                            elif 'already' not in msg.lower():
+                                results['errors'].append(f"{folder}: {msg}")
+                        else:
+                            ok, msg = scanner.deactivate_node(folder)
+                            if ok:
+                                results['disabled'].append(folder)
+                            elif 'already' not in msg.lower():
+                                results['errors'].append(f"{folder}: {msg}")
+                return results
             
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, _apply)
             return web.json_response({'success': True, 'results': results})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
@@ -886,9 +868,12 @@ try:
     async def _mnf_check_all_updates(request):
         try:
             scanner = get_scanner()
-            if not scanner.nodes:
-                scanner.scan(use_cache=True)
-            results = scanner.batch_check_updates()
+            loop = asyncio.get_event_loop()
+            def _check():
+                if not scanner.nodes:
+                    scanner.scan(use_cache=True)
+                return scanner.batch_check_updates()
+            results = await loop.run_in_executor(None, _check)
             updates_available = {k: v for k, v in results.items() if v.get('has_updates')}
             return web.json_response({
                 'success': True,
@@ -904,7 +889,8 @@ try:
         try:
             folder_name = request.match_info.get('folder_name', '')
             scanner = get_scanner()
-            result = scanner.check_for_updates(folder_name)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, scanner.check_for_updates, folder_name)
             return web.json_response({'success': True, 'folder_name': folder_name, **result})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
@@ -913,9 +899,10 @@ try:
     async def _mnf_batch_update(request):
         try:
             data = await request.json()
-            folder_names = data.get('folder_names')  # None = update all
+            folder_names = data.get('folder_names')
             scanner = get_scanner()
-            results = scanner.batch_update(folder_names)
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, scanner.batch_update, folder_names)
             successes = sum(1 for v in results.values() if v[0])
             return web.json_response({
                 'success': True,
@@ -932,16 +919,18 @@ try:
     async def _mnf_get_all_disk_usage(request):
         try:
             scanner = get_scanner()
-            if not scanner.nodes:
-                scanner.scan(use_cache=True)
-            
-            results = {}
-            total_size = 0
-            for node in scanner.nodes:
-                usage = scanner.get_disk_usage(node.folder_name)
-                results[node.folder_name] = usage
-                total_size += usage['size_bytes']
-            
+            loop = asyncio.get_event_loop()
+            def _calc():
+                if not scanner.nodes:
+                    scanner.scan(use_cache=True)
+                results = {}
+                total_size = 0
+                for node in scanner.nodes:
+                    usage = scanner.get_disk_usage(node.folder_name)
+                    results[node.folder_name] = usage
+                    total_size += usage['size_bytes']
+                return results, total_size
+            results, total_size = await loop.run_in_executor(None, _calc)
             return web.json_response({
                 'success': True,
                 'total_size_bytes': total_size,
@@ -956,7 +945,9 @@ try:
         try:
             folder_name = request.match_info.get('folder_name', '')
             scanner = get_scanner()
-            return web.json_response({'success': True, **scanner.get_disk_usage(folder_name)})
+            loop = asyncio.get_event_loop()
+            usage = await loop.run_in_executor(None, scanner.get_disk_usage, folder_name)
+            return web.json_response({'success': True, **usage})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
     
@@ -968,7 +959,8 @@ try:
             folder_name = request.match_info.get('folder_name', '')
             count = int(request.query.get('count', '10'))
             scanner = get_scanner()
-            commits = scanner.get_git_log(folder_name, count)
+            loop = asyncio.get_event_loop()
+            commits = await loop.run_in_executor(None, scanner.get_git_log, folder_name, count)
             return web.json_response({'success': True, 'commits': commits})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
@@ -982,7 +974,8 @@ try:
             if not commit_hash:
                 return web.json_response({'success': False, 'message': 'Commit hash required'}, status=400)
             scanner = get_scanner()
-            success, message = scanner.rollback_node(folder_name, commit_hash)
+            loop = asyncio.get_event_loop()
+            success, message = await loop.run_in_executor(None, scanner.rollback_node, folder_name, commit_hash)
             return web.json_response({'success': success, 'message': message})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
@@ -993,9 +986,12 @@ try:
     async def _mnf_detect_broken_nodes(request):
         try:
             scanner = get_scanner()
-            if not scanner.nodes:
-                scanner.scan(use_cache=True)
-            broken = scanner.detect_broken_nodes()
+            loop = asyncio.get_event_loop()
+            def _detect():
+                if not scanner.nodes:
+                    scanner.scan(use_cache=True)
+                return scanner.detect_broken_nodes()
+            broken = await loop.run_in_executor(None, _detect)
             return web.json_response({'success': True, 'broken_nodes': broken, 'count': len(broken)})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)

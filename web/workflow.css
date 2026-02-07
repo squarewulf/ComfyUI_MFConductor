@@ -1,0 +1,72 @@
+/* Workflow Accordion View */
+.workflow-group {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.workflow-header {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    background: var(--bg-secondary);
+    transition: background 0.2s;
+    user-select: none;
+}
+
+.workflow-header:hover {
+    background: var(--bg-hover);
+}
+
+.workflow-header .toggle-icon {
+    width: 1rem;
+    margin-right: 0.75rem;
+    transition: transform 0.2s;
+    color: var(--text-muted);
+}
+
+.workflow-group.expanded .toggle-icon {
+    transform: rotate(90deg);
+}
+
+.workflow-name {
+    font-weight: 500;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.workflow-count {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+}
+
+.workflow-content {
+    display: none;
+    padding: 1rem;
+    border-top: 1px solid var(--border-subtle);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.workflow-group.expanded .workflow-content {
+    display: block;
+}
+
+/* Override grid inside workflow content to be compact */
+.workflow-content .files-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.75rem;
+    padding: 0; /* Remove padding from grid inside */
+}
+
+
+
+
+
+

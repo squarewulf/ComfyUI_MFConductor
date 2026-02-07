@@ -25,5 +25,8 @@ data/usage.json
 .DS_Store
 Thumbs.db
 
+# Node (Tailwind build tooling)
+node_modules/
+
 
 
