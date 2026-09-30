@@ -2,7 +2,7 @@
  * MF Conductor - Custom Node Manager
  * Frontend Application
  * 
- * @version 1.3.0
+ * @version 1.4.5
  * @author squarewulf
  */
 
@@ -54,7 +54,7 @@ class MFConductor {
         this.sortDirection = 'asc';
         this.selectedNode = null;
         this.viewMode = 'grid'; // 'grid' or 'list'
-        this.currentTab = 'profiles'; // 'profiles', 'nodes', 'packages', 'community'
+        this.currentTab = 'profiles'; // 'profiles', 'workflows', 'nodes', 'packages', 'community'
         
         // User data & features
         this.userData = { favorites: [], tags: {}, notes: {}, usage: {} };
@@ -71,6 +71,7 @@ class MFConductor {
         // Profile management
         this.profiles = {};
         this.editingProfile = null;
+        this._profileEditorOpen = false;
         this.profileSelectedNodes = new Set();
         this.profileCustomFlags = [];
         this.profileExcludedPackages = new Set();
@@ -87,6 +88,15 @@ class MFConductor {
         this.filesSearch = '';
         this.filesViewMode = 'grid';
         this.selectedFile = null;
+
+        this.workflows = [];
+        this.workflowsViewMode = localStorage.getItem('mf_conductor_workflows_view') || 'tree';
+        this.workflowsSortDir = 'asc';
+        this.selectedWorkflowPath = null;
+        this.selectedWorkflowPaths = new Set();
+        this._lastCheckedWorkflowPath = null;
+        this.workflowTreeExpanded = new Set();
+        this._workflowTreeTouched = false;
         
         // Required nodes/packages - these are essential for ComfyUI to function
         this.requiredNodes = new Set([
@@ -104,6 +114,199 @@ class MFConductor {
             'einops', 'kornia',
             'comfy', 'comfyui'
         ]);
+        
+        // ComfyUI Launch Flags - organized by group
+        this.comfyFlagGroups = [
+            {
+                id: 'vram',
+                name: 'VRAM Management',
+                type: 'radio',
+                flags: [
+                    { value: '', label: 'Default', desc: 'Use automatic VRAM management' },
+                    { value: '--gpu-only', label: '--gpu-only', desc: 'Store and run everything on GPU' },
+                    { value: '--highvram', label: '--highvram', desc: 'Keep models in GPU memory' },
+                    { value: '--normalvram', label: '--normalvram', desc: 'Force normal VRAM use' },
+                    { value: '--lowvram', label: '--lowvram', desc: 'Split unet to use less VRAM' },
+                    { value: '--novram', label: '--novram', desc: 'When lowvram isn\'t enough' },
+                    { value: '--cpu', label: '--cpu', desc: 'Use CPU for everything (slow)' },
+                    { value: '--directml', label: '--directml', desc: 'Use DirectML backend (AMD/Intel)' }
+                ]
+            },
+            {
+                id: 'attention',
+                name: 'Attention',
+                type: 'radio',
+                flags: [
+                    { value: '', label: 'Default', desc: 'Use automatic attention' },
+                    { value: '--use-pytorch-cross-attention', label: '--use-pytorch-cross-attention', desc: 'PyTorch 2.0 cross attention' },
+                    { value: '--use-sage-attention', label: '--use-sage-attention', desc: 'Sage attention' },
+                    { value: '--use-flash-attention', label: '--use-flash-attention', desc: 'FlashAttention' },
+                    { value: '--use-split-cross-attention', label: '--use-split-cross-attention', desc: 'Split cross attention optimization' },
+                    { value: '--use-quad-cross-attention', label: '--use-quad-cross-attention', desc: 'Sub-quadratic cross attention' }
+                ]
+            },
+            {
+                id: 'attention-options',
+                name: 'Attention Options',
+                type: 'checkbox',
+                flags: [
+                    { value: '--disable-xformers', label: '--disable-xformers', desc: 'Disable xformers' },
+                    { value: '--force-upcast-attention', label: '--force-upcast-attention', desc: 'Force attention upcasting' },
+                    { value: '--dont-upcast-attention', label: '--dont-upcast-attention', desc: 'Disable attention upcasting' }
+                ]
+            },
+            {
+                id: 'precision',
+                name: 'Precision (Global)',
+                type: 'radio',
+                flags: [
+                    { value: '', label: 'Default', desc: 'Use automatic precision' },
+                    { value: '--force-fp16', label: '--force-fp16', desc: 'Force fp16' },
+                    { value: '--force-fp32', label: '--force-fp32', desc: 'Force fp32' }
+                ]
+            },
+            {
+                id: 'unet',
+                name: 'Precision (UNet)',
+                type: 'radio',
+                flags: [
+                    { value: '', label: 'Default', desc: 'Use automatic UNet precision' },
+                    { value: '--fp16-unet', label: '--fp16-unet', desc: 'Run diffusion model in fp16' },
+                    { value: '--fp32-unet', label: '--fp32-unet', desc: 'Run diffusion model in fp32' },
+                    { value: '--fp64-unet', label: '--fp64-unet', desc: 'Run diffusion model in fp64' },
+                    { value: '--bf16-unet', label: '--bf16-unet', desc: 'Run diffusion model in bf16' },
+                    { value: '--fp8_e4m3fn-unet', label: '--fp8_e4m3fn-unet', desc: 'Store unet weights in fp8_e4m3fn' },
+                    { value: '--fp8_e5m2-unet', label: '--fp8_e5m2-unet', desc: 'Store unet weights in fp8_e5m2' },
+                    { value: '--fp8_e8m0fnu-unet', label: '--fp8_e8m0fnu-unet', desc: 'Store unet weights in fp8_e8m0fnu' }
+                ]
+            },
+            {
+                id: 'vae',
+                name: 'Precision (VAE)',
+                type: 'radio',
+                extraCheckboxes: [
+                    { value: '--cpu-vae', label: '--cpu-vae', desc: 'Run VAE on CPU' }
+                ],
+                flags: [
+                    { value: '', label: 'Default', desc: 'Use automatic VAE precision' },
+                    { value: '--fp16-vae', label: '--fp16-vae', desc: 'Run VAE in fp16' },
+                    { value: '--fp32-vae', label: '--fp32-vae', desc: 'Run VAE in fp32' },
+                    { value: '--bf16-vae', label: '--bf16-vae', desc: 'Run VAE in bf16' }
+                ]
+            },
+            {
+                id: 'text-enc',
+                name: 'Precision (Text Encoder)',
+                type: 'radio',
+                flags: [
+                    { value: '', label: 'Default', desc: 'Use automatic text encoder precision' },
+                    { value: '--fp16-text-enc', label: '--fp16-text-enc', desc: 'Store text encoder in fp16' },
+                    { value: '--fp32-text-enc', label: '--fp32-text-enc', desc: 'Store text encoder in fp32' },
+                    { value: '--bf16-text-enc', label: '--bf16-text-enc', desc: 'Store text encoder in bf16' },
+                    { value: '--fp8_e4m3fn-text-enc', label: '--fp8_e4m3fn-text-enc', desc: 'Store text encoder in fp8 (e4m3fn)' },
+                    { value: '--fp8_e5m2-text-enc', label: '--fp8_e5m2-text-enc', desc: 'Store text encoder in fp8 (e5m2)' }
+                ]
+            },
+            {
+                id: 'cache',
+                name: 'Cache',
+                type: 'radio',
+                flags: [
+                    { value: '', label: 'Default', desc: 'Use automatic caching' },
+                    { value: '--cache-classic', label: '--cache-classic', desc: 'Old style aggressive caching' },
+                    { value: '--cache-lru 10', label: '--cache-lru', desc: 'LRU caching with 10 results' },
+                    { value: '--cache-none', label: '--cache-none', desc: 'No caching (less RAM)' },
+                    { value: '--cache-ram 4.0', label: '--cache-ram', desc: 'RAM pressure caching (4GB headroom)' }
+                ]
+            },
+            {
+                id: 'cuda',
+                name: 'CUDA/Device',
+                type: 'checkbox',
+                flags: [
+                    { value: '--cuda-malloc', label: '--cuda-malloc', desc: 'Enable cudaMallocAsync' },
+                    { value: '--disable-cuda-malloc', label: '--disable-cuda-malloc', desc: 'Disable cudaMallocAsync' },
+                    { value: '--disable-ipex-optimize', label: '--disable-ipex-optimize', desc: 'Disable Intel ipex.optimize' },
+                    { value: '--supports-fp8-compute', label: '--supports-fp8-compute', desc: 'Act like device supports fp8' }
+                ]
+            },
+            {
+                id: 'memory',
+                name: 'Memory/Offloading',
+                type: 'checkbox',
+                flags: [
+                    { value: '--async-offload', label: '--async-offload', desc: 'Use async weight offloading' },
+                    { value: '--disable-async-offload', label: '--disable-async-offload', desc: 'Disable async offloading' },
+                    { value: '--disable-smart-memory', label: '--disable-smart-memory', desc: 'Aggressively offload to RAM' },
+                    { value: '--disable-pinned-memory', label: '--disable-pinned-memory', desc: 'Disable pinned memory' },
+                    { value: '--mmap-torch-files', label: '--mmap-torch-files', desc: 'Use mmap for ckpt/pt files' },
+                    { value: '--disable-mmap', label: '--disable-mmap', desc: 'Don\'t use mmap for safetensors' },
+                    { value: '--force-non-blocking', label: '--force-non-blocking', desc: 'Force non-blocking operations' },
+                    { value: '--force-channels-last', label: '--force-channels-last', desc: 'Force channels last format' }
+                ]
+            },
+            {
+                id: 'preview',
+                name: 'Preview',
+                type: 'radio',
+                flags: [
+                    { value: '', label: 'Default', desc: 'No preview' },
+                    { value: '--preview-method auto', label: '--preview-method auto', desc: 'Auto preview method' },
+                    { value: '--preview-method latent2rgb', label: '--preview-method latent2rgb', desc: 'Latent to RGB preview' },
+                    { value: '--preview-method taesd', label: '--preview-method taesd', desc: 'TAESD preview (fast, good quality)' }
+                ]
+            },
+            {
+                id: 'performance',
+                name: 'Performance',
+                type: 'checkbox',
+                flags: [
+                    { value: '--fast', label: '--fast', desc: 'Enable all fast optimizations (experimental)' },
+                    { value: '--deterministic', label: '--deterministic', desc: 'Use deterministic algorithms' }
+                ]
+            },
+            {
+                id: 'nodes',
+                name: 'Custom Nodes',
+                type: 'checkbox',
+                flags: [
+                    { value: '--disable-all-custom-nodes', label: '--disable-all-custom-nodes', desc: 'Disable all custom nodes' },
+                    { value: '--disable-api-nodes', label: '--disable-api-nodes', desc: 'Disable API nodes' }
+                ]
+            },
+            {
+                id: 'manager',
+                name: 'ComfyUI Manager',
+                type: 'checkbox',
+                flags: [
+                    { value: '--enable-manager', label: '--enable-manager', desc: 'Official pip Manager (hides the classic Manager button)' },
+                    { value: '--disable-manager-ui', label: '--disable-manager-ui', desc: 'Disable official Manager UI only' }
+                ]
+            },
+            {
+                id: 'misc',
+                name: 'Miscellaneous',
+                type: 'checkbox',
+                flags: [
+                    { value: '--auto-launch', label: '--auto-launch', desc: 'Auto-launch browser' },
+                    { value: '--disable-auto-launch', label: '--disable-auto-launch', desc: 'Disable auto-launch' },
+                    { value: '--disable-metadata', label: '--disable-metadata', desc: 'Disable saving prompt metadata' },
+                    { value: '--multi-user', label: '--multi-user', desc: 'Enable per-user storage' },
+                    { value: '--enable-compress-response-body', label: '--enable-compress-response-body', desc: 'Compress response body' },
+                    { value: '--dont-print-server', label: '--dont-print-server', desc: 'Don\'t print server output' }
+                ]
+            },
+            {
+                id: 'custom',
+                name: 'Custom Flags',
+                type: 'custom'
+            }
+        ];
+        
+        // Track expanded flag group and flag state
+        this._expandedFlagGroup = null;
+        this._flagSearchQuery = '';
+        this._selectedFlags = {}; // Track selected flag values by group ID
         
         // ComfyUI Process Management
         this.comfyStatus = 'stopped'; // 'stopped', 'starting', 'running', 'error'
@@ -378,27 +581,111 @@ class MFConductor {
     }
     
     async init() {
-        this.loadSettings(); // Load settings first to apply theme
-        this.bindElements(); // Must be called before any logging
+        this.loadSettings();
+        this.bindElements();
         this.log('MF Conductor initializing...', 'info');
         this.bindEvents();
         this.bindMainTabs();
         this.bindComfyControls();
         this.bindSettingsEvents();
         this.loadUserPreferences();
+        this.bindCollectionControls();
         this.setupKeyboardShortcuts();
         this.log('Loading user data...', 'info');
         await this.loadUserData();
         await this.loadProfiles();
         this.renderProfilesGrid();
         this.updateComfyControls();
-        this.restoreConsoleFromStorage(); // Restore terminal history
+        this.restoreConsoleFromStorage();
         this.checkComfyStatus();
-        this.startBackendLogPolling(); // Start polling for backend logs
-        this.setupCleanupHandler(); // Clean up on page unload
-        this.setupHashNavigation(); // Handle URL hash for tab persistence
+        this.startBackendLogPolling();
+        this.setupCleanupHandler();
+        this.setupHashNavigation();
+        if (this.apiBase === '') {
+            this.connectWebSocket();
+        }
         this.log('MF Conductor ready', 'success');
-        // Don't load nodes immediately - wait until Nodes tab is clicked
+    }
+    
+    connectWebSocket() {
+        this._ws = null;
+        this._wsReconnectAttempts = 0;
+        this._wsMaxReconnect = 10;
+        this._wsUrl = null;
+        
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        this._wsUrl = `${protocol}//${window.location.host}/ws`;
+        
+        setTimeout(() => this._connectWs(), 1000);
+    }
+    
+    _connectWs() {
+        if (!this._wsUrl) return;
+        try {
+            this._ws = new WebSocket(this._wsUrl);
+        } catch (e) {
+            return;
+        }
+        
+        this._ws.onopen = () => {
+            this._wsReconnectAttempts = 0;
+        };
+        
+        this._ws.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                this._handleWsPush(msg);
+            } catch (e) {}
+        };
+        
+        this._ws.onclose = () => {
+            this._ws = null;
+            if (this._wsReconnectAttempts < this._wsMaxReconnect) {
+                const delay = Math.min(5000 * Math.pow(2, this._wsReconnectAttempts), 60000);
+                this._wsReconnectAttempts++;
+                setTimeout(() => this._connectWs(), delay);
+            }
+        };
+        
+        this._ws.onerror = () => {};
+    }
+    
+    _handleWsPush(msg) {
+        const { type, data } = msg;
+        
+        switch (type) {
+            case 'scan_complete':
+                this.log(`Background scan complete: ${data?.total || 0} nodes`, 'success');
+                this.loadNodes().then(() => this._refreshProfileEditorIfOpen());
+                break;
+            case 'node_installed':
+            case 'node_removed':
+            case 'node_activated':
+            case 'node_deactivated':
+                if (this.nodes.length > 0) {
+                    this.loadNodes().then(() => this._refreshProfileEditorIfOpen());
+                }
+                break;
+            case 'package_installed':
+            case 'package_uninstalled':
+            case 'package_upgraded':
+            case 'package_reinstalled':
+                if (this.currentTab === 'packages') {
+                    this.loadPackagesTab();
+                }
+                if (this._profileEditorOpen) {
+                    this.loadPackagesList().then(() => this.renderProfileEditorPackages()).catch(() => {});
+                }
+                break;
+        }
+    }
+    
+    _refreshProfileEditorIfOpen() {
+        if (!this._profileEditorOpen) return;
+        this.renderProfileEditorNodes(
+            document.getElementById('pe-available-search')?.value || '',
+            document.getElementById('pe-selected-search')?.value || ''
+        );
     }
     
     setupHashNavigation() {
@@ -416,8 +703,8 @@ class MFConductor {
         
         // Valid tab names (exclude files and console in integrated mode)
         const validTabs = isIntegrated 
-            ? ['profiles', 'nodes', 'packages', 'community']
-            : ['profiles', 'files', 'nodes', 'packages', 'console', 'community'];
+            ? ['profiles', 'workflows', 'nodes', 'packages']
+            : ['profiles', 'workflows', 'files', 'nodes', 'packages', 'console'];
         
         // Check URL hash on load and switch to that tab
         const hash = window.location.hash.slice(1); // Remove '#'
@@ -492,6 +779,8 @@ class MFConductor {
             this.scrollConsoleToBottom();
         } else if (tabName === 'files') {
             await this.loadFilesTab();
+        } else if (tabName === 'workflows') {
+            await this.loadWorkflowsTab();
         }
     }
     
@@ -566,6 +855,7 @@ class MFConductor {
         grid.className = viewMode === 'list' ? 'profiles-list' : 'profiles-grid';
         
         let html = '';
+        const profileLaunchLabel = this.apiBase === '/mf_conductor' ? 'Apply' : 'Launch';
         
         // Render existing profiles
         for (const [name, profile] of profileEntries) {
@@ -577,9 +867,9 @@ class MFConductor {
             if (viewMode === 'list') {
                 // List view row
                 html += `
-                    <div class="profile-row ${isDefault ? 'default' : ''}" data-profile="${this.escapeHtml(name)}">
+                    <div class="profile-row ${isDefault ? 'default' : ''}" data-profile="${this.escapeAttr(name)}">
                         <div class="profile-row-avatar">
-                            <img src="${this.escapeHtml(avatar)}" alt="${this.escapeHtml(name)}" onerror="this.src='default.svg'">
+                            <img src="${this.safeAvatar(avatar)}" alt="${this.escapeAttr(name)}" onerror="this.src='default.svg'">
                         </div>
                         <div class="profile-row-name">
                             <span class="name">${this.escapeHtml(name)}</span>
@@ -587,16 +877,16 @@ class MFConductor {
                         </div>
                         <div class="profile-row-nodes">${nodeCountText}</div>
                         <div class="profile-row-actions">
-                            <button class="btn-glass btn-sm btn-success" onclick="event.stopPropagation(); app.handleProfileAction('launch', '${this.escapeHtml(name)}')" title="Launch">
+                            <button class="btn-glass btn-sm btn-success" onclick="event.stopPropagation(); app.handleProfileAction('launch', '${this.escapeJs(name)}')" title="${profileLaunchLabel}">
                                 <i class="fa-solid fa-play"></i>
                             </button>
-                            <button class="btn-glass btn-sm" onclick="event.stopPropagation(); app.handleProfileAction('edit', '${this.escapeHtml(name)}')" title="Edit">
+                            <button class="btn-glass btn-sm" onclick="event.stopPropagation(); app.handleProfileAction('edit', '${this.escapeJs(name)}')" title="Edit">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
-                            <button class="btn-glass btn-sm" onclick="event.stopPropagation(); app.exportProfile('${this.escapeHtml(name)}')" title="Export">
+                            <button class="btn-glass btn-sm" onclick="event.stopPropagation(); app.exportProfile('${this.escapeJs(name)}')" title="Export">
                                 <i class="fa-solid fa-download"></i>
                             </button>
-                            <button class="btn-glass btn-sm ${isDefault ? 'btn-warning' : ''}" onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeHtml(name)}')" title="${isDefault ? 'Remove default' : 'Set as default'}">
+                            <button class="btn-glass btn-sm ${isDefault ? 'btn-warning' : ''}" onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeJs(name)}')" title="${isDefault ? 'Remove default' : 'Set as default'}">
                                 <i class="fa-solid fa-star"></i>
                             </button>
                         </div>
@@ -605,16 +895,16 @@ class MFConductor {
             } else {
                 // Grid view tile
                 html += `
-                    <div class="profile-tile ${isDefault ? 'default' : ''}" data-profile="${this.escapeHtml(name)}">
+                    <div class="profile-tile ${isDefault ? 'default' : ''}" data-profile="${this.escapeAttr(name)}">
                         <div class="profile-tile-content">
                             <div class="profile-tile-avatar">
-                                <img src="${this.escapeHtml(avatar)}" alt="${this.escapeHtml(name)}" onerror="this.src='default.svg'">
+                                <img src="${this.safeAvatar(avatar)}" alt="${this.escapeAttr(name)}" onerror="this.src='default.svg'">
                             </div>
                             <div class="profile-tile-info">
                                 <div class="profile-tile-name">
                                     ${this.escapeHtml(name)}
                                     <button class="profile-star ${isDefault ? 'active' : ''}" 
-                                            onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeHtml(name)}')"
+                                            onclick="event.stopPropagation(); app.toggleDefaultProfile('${this.escapeJs(name)}')"
                                             title="${isDefault ? 'Remove as default' : 'Set as default'}">
                                         <svg viewBox="0 0 24 24" fill="${isDefault ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
                                             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
@@ -625,13 +915,13 @@ class MFConductor {
                             </div>
                         </div>
                         <div class="profile-tile-actions">
-                            <button class="profile-action-btn launch" onclick="event.stopPropagation(); app.handleProfileAction('launch', '${this.escapeHtml(name)}')" title="Launch">
+                            <button class="profile-action-btn launch" onclick="event.stopPropagation(); app.handleProfileAction('launch', '${this.escapeJs(name)}')" title="${profileLaunchLabel}">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polygon points="5 3 19 12 5 21 5 3"/>
                                 </svg>
-                                <span>Launch</span>
+                                <span>${profileLaunchLabel}</span>
                             </button>
-                            <button class="profile-action-btn edit" onclick="event.stopPropagation(); app.handleProfileAction('edit', '${this.escapeHtml(name)}')" title="Edit">
+                            <button class="profile-action-btn edit" onclick="event.stopPropagation(); app.handleProfileAction('edit', '${this.escapeJs(name)}')" title="Edit">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                                     <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -1109,6 +1399,9 @@ class MFConductor {
             case 'launch':
                 await this.launchProfile(profileName);
                 break;
+            case 'apply':
+                await this.applyProfile(profileName);
+                break;
             case 'edit':
                 this.editProfile(profileName);
                 break;
@@ -1116,6 +1409,10 @@ class MFConductor {
     }
     
     async launchProfile(profileName) {
+        if (this.apiBase === '/mf_conductor') {
+            await this.applyProfile(profileName);
+            return;
+        }
         // Check if already running
         if (this.comfyStatus === 'running' || this.comfyStatus === 'starting') {
             this.log('ComfyUI is already running', 'warning');
@@ -1165,6 +1462,860 @@ class MFConductor {
         }
     }
     
+    bindCollectionControls() {
+        const sync = () => document.querySelectorAll('.collection-toolbar').forEach(toolbar => {
+            toolbar.querySelectorAll('[data-view]').forEach(button => button.setAttribute('aria-pressed', String(button.classList.contains('active'))));
+            const name = toolbar.dataset.collection;
+            const direction = name === 'nodes' ? this.sortDirection : name === 'browse' ? (this.browseSortDesc ? 'desc' : 'asc') : this[`${name}SortDir`] || 'asc';
+            const button = toolbar.querySelector('.collection-sort button');
+            if (button) {
+                button.title = direction === 'desc' ? 'Descending — click for ascending' : 'Ascending — click for descending';
+                button.setAttribute('aria-label', button.title);
+                const icon = button.querySelector('i');
+                if (icon) icon.className = `fa-solid fa-arrow-${direction === 'desc' ? 'up' : 'down'}-short-wide`;
+            }
+        });
+        document.getElementById('profiles-refresh-btn')?.addEventListener('click', async () => {
+            await this.loadProfiles();
+            this.renderProfilesGrid();
+        });
+        document.getElementById('packages-sort-dir')?.addEventListener('click', () => {
+            this.packagesSortDir = this.packagesSortDir === 'desc' ? 'asc' : 'desc';
+            this.renderPackagesTab();
+        });
+        document.addEventListener('click', () => queueMicrotask(sync));
+        document.addEventListener('change', () => queueMicrotask(sync));
+        sync();
+    }
+
+    async loadWorkflowLaunchOptions() {
+        if (this.workflowLaunchOptions) return true;
+        if (this._launchOptionsLoading) return this._launchOptionsLoading;
+        this._launchOptionsLoading = (async () => {
+            const status = document.getElementById('workflow-launch-status');
+            try {
+                const response = await fetch(`${this.apiBase}/api/workflows/launch-options`);
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.message || 'Unable to load launch setup');
+                const profile = document.getElementById('workflow-launch-profile');
+                const flags = document.getElementById('workflow-launch-flags');
+                profile.innerHTML = '<option value="">No profile</option>' + Object.keys(data.profiles).map(name => `<option value="${this.escapeAttr(name)}">${this.escapeHtml(name)}</option>`).join('');
+                profile.value = data.default_profile || '';
+                flags.value = data.profiles[profile.value] || '';
+                profile.addEventListener('change', () => { flags.value = data.profiles[profile.value] || ''; });
+                document.getElementById('workflow-keep-enabled').textContent = data.keep_enabled.join(' · ') || 'No utility packs installed';
+                document.getElementById('workflow-extra-nodes').innerHTML = data.available_nodes.filter(name => !data.keep_enabled.includes(name)).map(name => `<option value="${this.escapeAttr(name)}">${this.escapeHtml(name)}</option>`).join('');
+                document.querySelectorAll('[data-launch-preset]').forEach(button => button.addEventListener('click', () => {
+                    const preset = button.dataset.launchPreset;
+                    const option = preset.split(' ')[0];
+                    if (option === '--lowvram' || option === '--cpu') {
+                        flags.value = flags.value.replace(/(^|\s)--(?:gpu-only|highvram|lowvram|novram|cpu)(?=\s|$)/g, ' ').trim();
+                    }
+                    if (!flags.value.split(/\s+/).includes(option)) flags.value = `${flags.value.trim()} ${preset}`.trim();
+                    flags.focus();
+                }));
+                status.textContent = this.apiBase === '/mf_conductor' ? 'Launch prepares a file to run after stopping ComfyUI.' : 'Flags apply to this launch only.';
+                this.workflowLaunchOptions = data;
+                return true;
+            } catch (error) {
+                status.textContent = `Launch setup unavailable. Restart MF Conductor and refresh: ${error.message}`;
+                this.showToast('error', status.textContent);
+                return false;
+            } finally { this._launchOptionsLoading = null; }
+        })();
+        return this._launchOptionsLoading;
+    }
+
+    async loadWorkflowsTab(force = false) {
+        this.bindWorkflowsToolbar();
+        await this.loadWorkflowLaunchOptions();
+        if (!force && this.workflows.length) {
+            this.renderWorkflowsGrid();
+            return;
+        }
+        await this.loadWorkflows();
+        this.renderWorkflowsGrid();
+        if (this.selectedWorkflowPath) {
+            const stillThere = this.workflows.some((wf) => wf.path === this.selectedWorkflowPath);
+            if (stillThere) this.selectWorkflow(this.selectedWorkflowPath);
+        }
+    }
+
+    async loadWorkflows() {
+        this.log('Loading workflows...', 'info');
+        const grid = document.getElementById('workflows-grid');
+        if (grid && !this.workflows.length) {
+            grid.innerHTML = '<div class="workflow-empty"><p>Reading workflows...</p></div>';
+        }
+        try {
+            const response = await fetch(`${this.apiBase}/api/workflows`);
+            const data = await response.json();
+            this.workflows = data.success ? (data.workflows || []) : [];
+            const hint = document.getElementById('workflows-root-hint');
+            if (hint) {
+                hint.textContent = data.exists === false
+                    ? 'user/default/workflows not found'
+                    : (data.root || 'user/default/workflows');
+            }
+            this.log(`Loaded ${this.workflows.length} workflow${this.workflows.length !== 1 ? 's' : ''}`, 'success');
+        } catch (error) {
+            this.log(`Error loading workflows: ${error.message}`, 'error');
+            this.workflows = [];
+        }
+    }
+
+    bindWorkflowsToolbar() {
+        if (this._workflowsToolbarBound) return;
+        this._workflowsToolbarBound = true;
+
+        document.getElementById('workflows-search')?.addEventListener('input', () => this.renderWorkflowsGrid());
+        document.getElementById('workflows-sort')?.addEventListener('change', () => this.renderWorkflowsGrid());
+        document.getElementById('workflows-refresh-btn')?.addEventListener('click', () => this.loadWorkflowsTab(true));
+        document.getElementById('workflows-launch-selected')?.addEventListener('click', () => this.launchSelectedWorkflows());
+        document.getElementById('workflows-select-visible')?.addEventListener('click', () => this.selectVisibleWorkflows());
+        document.getElementById('workflows-deselect')?.addEventListener('click', () => this.clearWorkflowSelection());
+        document.getElementById('workflows-expand-all')?.addEventListener('click', () => this.expandAllWorkflowFolders());
+        document.getElementById('workflows-collapse-all')?.addEventListener('click', () => this.collapseAllWorkflowFolders());
+
+        const sortDirBtn = document.getElementById('workflows-sort-dir');
+        if (sortDirBtn) {
+            sortDirBtn.addEventListener('click', () => {
+                this.workflowsSortDir = this.workflowsSortDir === 'asc' ? 'desc' : 'asc';
+                const icon = sortDirBtn.querySelector('i');
+                if (icon) {
+                    icon.className = this.workflowsSortDir === 'asc'
+                        ? 'fa-solid fa-arrow-down-short-wide'
+                        : 'fa-solid fa-arrow-up-short-wide';
+                }
+                this.renderWorkflowsGrid();
+            });
+        }
+
+        const viewBtns = {
+            tree: document.getElementById('workflows-view-tree'),
+            grid: document.getElementById('workflows-view-grid'),
+            list: document.getElementById('workflows-view-list'),
+        };
+        const setView = (mode) => {
+            this.workflowsViewMode = mode;
+            Object.entries(viewBtns).forEach(([key, btn]) => btn?.classList.toggle('active', key === mode));
+            localStorage.setItem('mf_conductor_workflows_view', mode);
+            this.renderWorkflowsGrid();
+        };
+        Object.entries(viewBtns).forEach(([key, btn]) => {
+            btn?.classList.toggle('active', (this.workflowsViewMode || 'tree') === key);
+            btn?.addEventListener('click', () => setView(key));
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+            if (!document.getElementById('tab-workflows')?.classList.contains('active')) return;
+            if (!this.selectedWorkflowPaths.size) return;
+            this.clearWorkflowSelection();
+        });
+    }
+
+    _filteredWorkflows() {
+        const searchTerm = (document.getElementById('workflows-search')?.value || '').toLowerCase();
+        return this.workflows.filter((wf) => {
+            if (!searchTerm) return true;
+            return wf.name.toLowerCase().includes(searchTerm)
+                || (wf.folder || '').toLowerCase().includes(searchTerm)
+                || (wf.path || '').toLowerCase().includes(searchTerm);
+        });
+    }
+
+    _visibleWorkflowPaths() {
+        const items = this._filteredWorkflows().sort((a, b) => this._workflowSortCompare(a, b));
+        if ((this.workflowsViewMode || 'tree') !== 'tree') {
+            return items.map((wf) => wf.path);
+        }
+        const searchTerm = (document.getElementById('workflows-search')?.value || '').toLowerCase();
+        return this._collectVisibleTreePaths(this._buildWorkflowTree(items), searchTerm);
+    }
+
+    _collectVisibleTreePaths(node, searchTerm, out = []) {
+        const folders = [...node.folders.values()].sort((a, b) => a.name.localeCompare(b.name));
+        for (const folder of folders) {
+            if (this._isWorkflowFolderOpen(folder.path, searchTerm)) {
+                this._collectVisibleTreePaths(folder, searchTerm, out);
+            }
+        }
+        const workflows = [...node.workflows].sort((a, b) => this._workflowSortCompare(a, b));
+        for (const wf of workflows) out.push(wf.path);
+        return out;
+    }
+
+    _workflowPathsInFolder(folderPath) {
+        const prefix = folderPath ? `${folderPath}/` : '';
+        return this.workflows
+            .filter((wf) => (wf.folder || '') === folderPath || (wf.folder || '').startsWith(prefix))
+            .map((wf) => wf.path);
+    }
+
+    _workflowCheckHtml(relPath) {
+        const checked = this.selectedWorkflowPaths.has(relPath) ? ' checked' : '';
+        return `<input type="checkbox" class="workflow-check" ${checked} onclick="event.stopPropagation(); app.toggleWorkflowChecked('${this.escapeJs(relPath)}', this.checked, event)">`;
+    }
+
+    selectedWorkflowList() {
+        const checked = this._visibleWorkflowPaths().filter((path) => this.selectedWorkflowPaths.has(path));
+        for (const path of this.selectedWorkflowPaths) {
+            if (!checked.includes(path)) checked.push(path);
+        }
+        if (checked.length) return checked;
+        return this.selectedWorkflowPath ? [this.selectedWorkflowPath] : [];
+    }
+
+    _applyCheckRange(fromPath, toPath, checked) {
+        const paths = this._visibleWorkflowPaths();
+        const start = paths.indexOf(fromPath);
+        const end = paths.indexOf(toPath);
+        if (start < 0 || end < 0) {
+            if (checked) this.selectedWorkflowPaths.add(toPath);
+            else this.selectedWorkflowPaths.delete(toPath);
+            return;
+        }
+        const lo = Math.min(start, end);
+        const hi = Math.max(start, end);
+        for (let i = lo; i <= hi; i++) {
+            if (checked) this.selectedWorkflowPaths.add(paths[i]);
+            else this.selectedWorkflowPaths.delete(paths[i]);
+        }
+    }
+
+    toggleWorkflowChecked(relPath, checked, event = null) {
+        if (event?.shiftKey && this._lastCheckedWorkflowPath) {
+            this._applyCheckRange(this._lastCheckedWorkflowPath, relPath, checked);
+        } else if (checked) {
+            this.selectedWorkflowPaths.add(relPath);
+        } else {
+            this.selectedWorkflowPaths.delete(relPath);
+        }
+        this._lastCheckedWorkflowPath = relPath;
+        this._highlightSelectedWorkflow();
+        this._updateWorkflowSelectionBar();
+    }
+
+    toggleWorkflowFolderChecked(folderPath, checked) {
+        const paths = this._workflowPathsInFolder(folderPath);
+        for (const path of paths) {
+            if (checked) this.selectedWorkflowPaths.add(path);
+            else this.selectedWorkflowPaths.delete(path);
+        }
+        if (paths.length) this._lastCheckedWorkflowPath = paths[paths.length - 1];
+        this._highlightSelectedWorkflow();
+        this._updateWorkflowSelectionBar();
+    }
+
+    selectVisibleWorkflows() {
+        const paths = this._visibleWorkflowPaths();
+        if (!paths.length) return;
+        for (const path of paths) this.selectedWorkflowPaths.add(path);
+        this._lastCheckedWorkflowPath = paths[paths.length - 1];
+        this._highlightSelectedWorkflow();
+        this._updateWorkflowSelectionBar();
+    }
+
+    clearWorkflowSelection() {
+        this.selectedWorkflowPaths.clear();
+        this._lastCheckedWorkflowPath = null;
+        this._highlightSelectedWorkflow();
+        this._updateWorkflowSelectionBar();
+    }
+
+    _updateWorkflowSelectionBar() {
+        const count = this.selectedWorkflowPaths.size;
+        const bar = document.getElementById('workflows-selection-bar');
+        const countEl = document.getElementById('workflows-selected-count');
+        const deselectBtn = document.getElementById('workflows-deselect');
+        const launchBtn = document.getElementById('workflows-launch-selected');
+        const infoBtn = document.getElementById('workflow-info-launch-btn');
+        const launchLabel = this.apiBase === '/mf_conductor' ? 'Apply' : 'Launch';
+        if (bar) bar.classList.toggle('is-empty', count === 0);
+        if (countEl) countEl.textContent = count ? `${count} selected` : 'None selected';
+        if (deselectBtn) deselectBtn.disabled = count === 0;
+        if (launchBtn) {
+            launchBtn.classList.toggle('hidden', count < 2);
+            const label = launchBtn.querySelector('span');
+            if (label) label.textContent = `${launchLabel} ${count}`;
+        }
+        if (infoBtn && !infoBtn.classList.contains('hidden')) {
+            const label = infoBtn.querySelector('span');
+            if (label) label.textContent = count > 1 ? `${launchLabel} ${count}` : launchLabel;
+        }
+    }
+
+    _workflowSortCompare(a, b) {
+        const sortBy = document.getElementById('workflows-sort')?.value || 'date';
+        const sortDir = this.workflowsSortDir || 'asc';
+        let cmp = 0;
+        if (sortBy === 'name') {
+            cmp = a.name.localeCompare(b.name);
+        } else if (sortBy === 'nodes') {
+            cmp = (a.custom_folders?.length || 0) - (b.custom_folders?.length || 0);
+        } else {
+            cmp = (a.mtime || 0) - (b.mtime || 0);
+        }
+        return sortDir === 'desc' ? -cmp : cmp;
+    }
+
+    _buildWorkflowTree(items) {
+        const root = { name: '', path: '', folders: new Map(), workflows: [] };
+        for (const wf of items) {
+            const parts = String(wf.folder || '').split('/').filter(Boolean);
+            let node = root;
+            let path = '';
+            for (const part of parts) {
+                path = path ? `${path}/${part}` : part;
+                if (!node.folders.has(part)) {
+                    node.folders.set(part, { name: part, path, folders: new Map(), workflows: [] });
+                }
+                node = node.folders.get(part);
+            }
+            node.workflows.push(wf);
+        }
+        return root;
+    }
+
+    _workflowTreeCount(node) {
+        let count = node.workflows.length;
+        for (const child of node.folders.values()) {
+            count += this._workflowTreeCount(child);
+        }
+        return count;
+    }
+
+    _collectWorkflowFolderPaths(node, out = []) {
+        for (const child of node.folders.values()) {
+            out.push(child.path);
+            this._collectWorkflowFolderPaths(child, out);
+        }
+        return out;
+    }
+
+    _seedWorkflowTreeExpanded() {
+        this._workflowTreeTouched = true;
+    }
+
+    _isWorkflowFolderOpen(folderPath, searchTerm) {
+        if (searchTerm) return true;
+        return this.workflowTreeExpanded.has(folderPath);
+    }
+
+    _saveWorkflowTreeExpanded() {
+        localStorage.setItem('mf_conductor_workflow_tree', JSON.stringify([...this.workflowTreeExpanded]));
+    }
+
+    toggleWorkflowFolder(folderPath) {
+        this._seedWorkflowTreeExpanded();
+        if (this.workflowTreeExpanded.has(folderPath)) {
+            this.workflowTreeExpanded.delete(folderPath);
+        } else {
+            this.workflowTreeExpanded.add(folderPath);
+        }
+        this._saveWorkflowTreeExpanded();
+        this.renderWorkflowsGrid();
+    }
+
+    expandAllWorkflowFolders() {
+        const tree = this._buildWorkflowTree(this.workflows);
+        this.workflowTreeExpanded = new Set(this._collectWorkflowFolderPaths(tree));
+        this._workflowTreeTouched = true;
+        this._saveWorkflowTreeExpanded();
+        this.renderWorkflowsGrid();
+    }
+
+    collapseAllWorkflowFolders() {
+        this.workflowTreeExpanded = new Set();
+        this._workflowTreeTouched = true;
+        this._saveWorkflowTreeExpanded();
+        this.renderWorkflowsGrid();
+    }
+
+    _workflowRowMeta(wf) {
+        const nodeCount = (wf.custom_folders || []).length;
+        const missing = (wf.missing_folders || []).length;
+        return {
+            missing,
+            missingClass: missing ? ' workflow-missing' : '',
+            meta: missing
+                ? `${nodeCount} nodes · ${missing} missing`
+                : `${nodeCount} custom node${nodeCount !== 1 ? 's' : ''}`,
+        };
+    }
+
+    _renderWorkflowTreeHtml(node, depth, launchLabel, searchTerm) {
+        let html = '';
+        const folders = [...node.folders.values()].sort((a, b) => a.name.localeCompare(b.name));
+        const workflows = [...node.workflows].sort((a, b) => this._workflowSortCompare(a, b));
+
+        for (const folder of folders) {
+            const open = this._isWorkflowFolderOpen(folder.path, searchTerm);
+            const count = this._workflowTreeCount(folder);
+            const pathJs = this.escapeJs(folder.path);
+            const folderPaths = this._workflowPathsInFolder(folder.path);
+            const folderChecked = folderPaths.length && folderPaths.every((path) => this.selectedWorkflowPaths.has(path));
+            html += `
+                <div class="workflow-tree-row workflow-tree-folder ${open ? 'open' : ''}"
+                     style="padding-left: ${0.75 + depth * 1.15}rem"
+                     onclick="event.stopPropagation(); app.toggleWorkflowFolder('${pathJs}')">
+                    <input type="checkbox" class="workflow-check workflow-folder-check" data-workflow-folder="${this.escapeAttr(folder.path)}" ${folderChecked ? ' checked' : ''}
+                           onclick="event.stopPropagation(); app.toggleWorkflowFolderChecked('${pathJs}', this.checked)">
+                    <i class="fa-solid fa-chevron-right workflow-tree-chevron"></i>
+                    <i class="fa-solid ${open ? 'fa-folder-open' : 'fa-folder'} workflow-tree-folder-icon"></i>
+                    <span class="name">${this.escapeHtml(folder.name)}</span>
+                    <span class="workflow-tree-count">${count}</span>
+                </div>`;
+            if (open) {
+                html += this._renderWorkflowTreeHtml(folder, depth + 1, launchLabel, searchTerm);
+            }
+        }
+
+        for (const wf of workflows) {
+            const { missingClass, meta } = this._workflowRowMeta(wf);
+            const pathJs = this.escapeJs(wf.path);
+            const selectedClass = this.selectedWorkflowPaths.has(wf.path) ? ' selected' : '';
+            html += `
+                <div class="workflow-tree-row workflow-tree-file${missingClass}${selectedClass}"
+                     style="padding-left: ${0.75 + depth * 1.15}rem"
+                     data-workflow="${this.escapeAttr(wf.path)}"
+                     onclick="app.selectWorkflow('${pathJs}', event)">
+                    ${this._workflowCheckHtml(wf.path)}
+                    <i class="fa-solid fa-diagram-project workflow-tile-icon"></i>
+                    <span class="name">${this.escapeHtml(wf.name)}</span>
+                    <span class="workflow-tree-meta">${this.escapeHtml(meta)}</span>
+                    <div class="workflow-tree-actions">
+                        <button class="btn-glass btn-sm btn-success" onclick="event.stopPropagation(); app.launchWorkflow('${pathJs}')" title="${launchLabel}">
+                            <i class="fa-solid fa-play"></i>
+                        </button>
+                    </div>
+                </div>`;
+        }
+        return html;
+    }
+
+    renderWorkflowsGrid() {
+        const grid = document.getElementById('workflows-grid');
+        if (!grid) return;
+
+        const searchTerm = (document.getElementById('workflows-search')?.value || '').toLowerCase();
+        const viewMode = this.workflowsViewMode || 'tree';
+        const launchLabel = this.apiBase === '/mf_conductor' ? 'Apply' : 'Launch';
+        const treeActions = document.getElementById('workflows-tree-actions');
+        if (treeActions) {
+            treeActions.classList.toggle('hidden', viewMode !== 'tree');
+        }
+
+        let items = this._filteredWorkflows();
+        items.sort((a, b) => this._workflowSortCompare(a, b));
+
+        const countEl = document.getElementById('workflows-count');
+        if (countEl) {
+            countEl.textContent = searchTerm
+                ? `${items.length} of ${this.workflows.length} workflows`
+                : `${this.workflows.length} workflow${this.workflows.length !== 1 ? 's' : ''}`;
+        }
+
+        if (!this.workflows.length) {
+            grid.className = 'workflow-tree';
+            grid.innerHTML = `
+                <div class="workflow-empty">
+                    <i class="fa-solid fa-diagram-project"></i>
+                    <p>No workflows found in <code>user/default/workflows</code></p>
+                    <p class="text-xs text-slate-600 mt-2">Save a graph from ComfyUI and refresh this tab.</p>
+                </div>`;
+            this._updateWorkflowSelectionBar();
+            return;
+        }
+
+        if (!items.length) {
+            grid.className = 'workflow-tree';
+            grid.innerHTML = `<div class="workflow-empty"><p>No workflows match your search</p></div>`;
+            this._updateWorkflowSelectionBar();
+            return;
+        }
+
+        if (viewMode === 'tree') {
+            grid.className = 'workflow-tree';
+            grid.innerHTML = this._renderWorkflowTreeHtml(this._buildWorkflowTree(items), 0, launchLabel, searchTerm);
+            this._updateWorkflowSelectionBar();
+            return;
+        }
+
+        grid.className = viewMode === 'list' ? 'profiles-list' : 'profiles-grid';
+        let html = '';
+        for (const wf of items) {
+            const { missingClass, meta } = this._workflowRowMeta(wf);
+            const folderBadge = wf.folder
+                ? `<span class="workflow-folder">${this.escapeHtml(wf.folder)}</span>`
+                : '';
+            const pathJs = this.escapeJs(wf.path);
+
+            if (viewMode === 'list') {
+                html += `
+                    <div class="profile-row workflow-row${missingClass}${this.selectedWorkflowPaths.has(wf.path) ? ' selected' : ''}" title="${this.escapeAttr(wf.path)}" data-workflow="${this.escapeAttr(wf.path)}" onclick="app.selectWorkflow('${pathJs}', event)">
+                        ${this._workflowCheckHtml(wf.path)}
+                        <div class="profile-row-avatar workflow-tile-icon">
+                            <i class="fa-solid fa-diagram-project"></i>
+                        </div>
+                        <div class="profile-row-name">
+                            <span class="name">${this.escapeHtml(wf.name)}</span>
+                            ${folderBadge}
+                        </div>
+                        <div class="profile-row-nodes">${this.escapeHtml(meta)}</div>
+                        <div class="profile-row-actions">
+                            <button class="btn-glass btn-sm btn-success" onclick="event.stopPropagation(); app.launchWorkflow('${pathJs}')" title="${launchLabel}">
+                                <i class="fa-solid fa-play"></i>
+                            </button>
+                            <button class="btn-glass btn-sm" onclick="event.stopPropagation(); app.selectWorkflow('${pathJs}')" title="Details">
+                                <i class="fa-solid fa-circle-info"></i>
+                            </button>
+                        </div>
+                    </div>`;
+            } else {
+                html += `
+                    <div class="profile-tile${missingClass}${this.selectedWorkflowPaths.has(wf.path) ? ' selected' : ''}" data-workflow="${this.escapeAttr(wf.path)}" onclick="app.selectWorkflow('${pathJs}', event)">
+                        <div class="profile-tile-content">
+                            ${this._workflowCheckHtml(wf.path)}
+                            <div class="profile-tile-avatar workflow-tile-icon">
+                                <i class="fa-solid fa-diagram-project"></i>
+                            </div>
+                            <div class="profile-tile-info">
+                                <div class="profile-tile-name">${this.escapeHtml(wf.name)}</div>
+                                <div class="profile-tile-meta">${this.escapeHtml(meta)}</div>
+                                ${folderBadge}
+                            </div>
+                        </div>
+                        <div class="profile-tile-actions">
+                            <button class="profile-action-btn launch" onclick="event.stopPropagation(); app.launchWorkflow('${pathJs}')" title="${launchLabel}">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="5 3 19 12 5 21 5 3"/>
+                                </svg>
+                                <span>${launchLabel}</span>
+                            </button>
+                            <button class="profile-action-btn edit" onclick="event.stopPropagation(); app.selectWorkflow('${pathJs}')" title="Details">
+                                <i class="fa-solid fa-circle-info"></i>
+                                <span>Details</span>
+                            </button>
+                        </div>
+                    </div>`;
+            }
+        }
+        grid.innerHTML = html;
+        this._updateWorkflowSelectionBar();
+    }
+
+    _chipList(items, emptyText) {
+        if (!items || !items.length) {
+            return `<p class="text-xs text-slate-600">${this.escapeHtml(emptyText)}</p>`;
+        }
+        return `<div class="workflow-chip-list">${items.map((item) =>
+            `<span class="workflow-chip">${this.escapeHtml(item)}</span>`
+        ).join('')}</div>`;
+    }
+
+    openWorkflowDetails(relPath) {
+        return this.selectWorkflow(relPath);
+    }
+
+    closeWorkflowDetails() {}
+
+    _highlightSelectedWorkflow() {
+        document.querySelectorAll('[data-workflow]').forEach((el) => {
+            const path = el.dataset.workflow;
+            el.classList.toggle('selected', this.selectedWorkflowPaths.has(path));
+            el.classList.toggle('focused', path === this.selectedWorkflowPath);
+            const box = el.querySelector(':scope > .workflow-check');
+            if (box) box.checked = this.selectedWorkflowPaths.has(path);
+        });
+        document.querySelectorAll('.workflow-folder-check').forEach((box) => {
+            const paths = this._workflowPathsInFolder(box.dataset.workflowFolder || '');
+            const selected = paths.filter((path) => this.selectedWorkflowPaths.has(path)).length;
+            box.checked = selected > 0 && selected === paths.length;
+            box.indeterminate = selected > 0 && selected < paths.length;
+        });
+    }
+
+    _resetWorkflowInfo() {
+        const title = document.getElementById('workflow-info-title');
+        const pathEl = document.getElementById('workflow-info-path');
+        const launchBtn = document.getElementById('workflow-info-launch-btn');
+        const nodesPanel = document.getElementById('workflow-info-nodes');
+        const metaPanel = document.getElementById('workflow-info-meta');
+        if (title) title.textContent = 'Select a workflow';
+        if (pathEl) pathEl.textContent = '';
+        if (launchBtn) launchBtn.classList.add('hidden');
+        if (nodesPanel) {
+            nodesPanel.innerHTML = '<h3>Nodes &amp; packages</h3><p class="workflow-info-empty">Select a workflow to see its nodes and packages.</p>';
+        }
+        if (metaPanel) {
+            metaPanel.innerHTML = '<h3>Info</h3><p class="workflow-info-empty">Path, size, and launch isolation details appear here.</p>';
+        }
+    }
+
+    async selectWorkflow(relPath, event = null) {
+        if (event?.shiftKey) {
+            this._applyCheckRange(this._lastCheckedWorkflowPath || this.selectedWorkflowPath || relPath, relPath, true);
+            this._lastCheckedWorkflowPath = relPath;
+        } else if (event?.ctrlKey || event?.metaKey) {
+            this.toggleWorkflowChecked(relPath, !this.selectedWorkflowPaths.has(relPath));
+        }
+
+        this.selectedWorkflowPath = relPath;
+        this._highlightSelectedWorkflow();
+        this._updateWorkflowSelectionBar();
+
+        const listed = this.workflows.find((wf) => wf.path === relPath);
+        const title = document.getElementById('workflow-info-title');
+        const pathEl = document.getElementById('workflow-info-path');
+        const launchBtn = document.getElementById('workflow-info-launch-btn');
+        const nodesPanel = document.getElementById('workflow-info-nodes');
+        const metaPanel = document.getElementById('workflow-info-meta');
+        if (!nodesPanel || !metaPanel) return;
+
+        if (title) title.textContent = listed?.name || relPath;
+        if (pathEl) pathEl.textContent = relPath;
+        const launchLabel = this.apiBase === '/mf_conductor' ? 'Apply' : 'Launch';
+        if (launchBtn) {
+            launchBtn.classList.remove('hidden');
+            launchBtn.querySelector('span').textContent = this.selectedWorkflowPaths.size > 1
+                ? `${launchLabel} ${this.selectedWorkflowPaths.size}`
+                : launchLabel;
+            launchBtn.onclick = () => this.launchSelectedWorkflows();
+        }
+        nodesPanel.innerHTML = '<h3>Nodes &amp; packages</h3><p class="workflow-info-empty">Analyzing workflow...</p>';
+        metaPanel.innerHTML = '<h3>Info</h3><p class="workflow-info-empty">Loading...</p>';
+
+        try {
+            const response = await fetch(`${this.apiBase}/api/workflows/analyze?path=${encodeURIComponent(relPath)}`);
+            const data = await response.json();
+            if (!data.success) {
+                nodesPanel.innerHTML = `<h3>Nodes &amp; packages</h3><p class="text-red-400 text-sm">${this.escapeHtml(data.message || 'Analyze failed')}</p>`;
+                metaPanel.innerHTML = `<h3>Info</h3><p class="text-red-400 text-sm">${this.escapeHtml(data.message || 'Analyze failed')}</p>`;
+                return;
+            }
+            if (title) title.textContent = data.name || listed?.name || relPath;
+            const missing = data.missing_folders || [];
+            const unmapped = data.unmapped_types || [];
+            nodesPanel.innerHTML = `
+                <h3>Nodes &amp; packages</h3>
+                <h4>Workflow nodes (${(data.node_types || []).length})</h4>
+                ${this._chipList(data.node_types, 'No node types found')}
+                <h4>Custom node packs (${(data.required_folders || []).length})</h4>
+                ${this._chipList(data.required_folders, 'None mapped')}
+                <h4>Pip packages (${(data.pip_requirements || []).length})</h4>
+                ${this._chipList(data.pip_requirements, 'No requirements.txt on the mapped nodes')}
+            `;
+            const modified = listed?.mtime ? new Date(listed.mtime * 1000).toLocaleString() : '—';
+            const size = listed?.size != null ? this.formatBytes(listed.size) : '—';
+            metaPanel.innerHTML = `
+                <h3>Info</h3>
+                <dl class="workflow-info-kv">
+                    <div><dt>Name</dt><dd>${this.escapeHtml(data.name || listed?.name || relPath)}</dd></div>
+                    <div><dt>Path</dt><dd>${this.escapeHtml(relPath)}</dd></div>
+                    <div><dt>Folder</dt><dd>${this.escapeHtml(listed?.folder || '(root)')}</dd></div>
+                    <div><dt>Size</dt><dd>${this.escapeHtml(size)}</dd></div>
+                    <div><dt>Modified</dt><dd>${this.escapeHtml(modified)}</dd></div>
+                    <div><dt>Graph nodes</dt><dd>${data.node_count ?? 0}</dd></div>
+                </dl>
+                ${missing.length ? `<h4>Missing packs</h4>${this._chipList(missing, '')}` : ''}
+                ${unmapped.length ? `<h4>Unmapped types</h4>${this._chipList(unmapped, '')}` : ''}
+                <h4>Unused node deps (${(data.blockable_packages || []).length})</h4>
+                ${this._chipList(data.blockable_packages, 'No extra unused-node requirements')}
+                <p class="workflow-info-empty" style="margin-top:0.75rem">Launch enables these packs plus always-on tools (Manager, Frisk, Crystools, MF Conductor). Other custom-node folders are disabled. Unused pip names are listed here but not auto-blocked. Flags come from your default profile.</p>
+            `;
+        } catch (error) {
+            nodesPanel.innerHTML = `<h3>Nodes &amp; packages</h3><p class="text-red-400 text-sm">${this.escapeHtml(error.message)}</p>`;
+            if (metaPanel) {
+                metaPanel.innerHTML = `<h3>Info</h3><p class="text-red-400 text-sm">${this.escapeHtml(error.message)}</p>`;
+            }
+        }
+    }
+
+    async confirmMissingWorkflowPacks(missing) {
+        const launchLabel = this.apiBase === '/mf_conductor' ? 'Apply' : 'Launch';
+        let installable = [];
+        let unresolved = missing.map((name) => ({ name }));
+        try {
+            const response = await fetch(`${this.apiBase}/api/workflows/resolve-missing`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ names: missing })
+            });
+            const data = await response.json();
+            if (data.success) {
+                installable = data.installable || [];
+                unresolved = data.unresolved || [];
+            }
+        } catch (error) {
+            this.log(`Could not resolve missing packs: ${error.message}`, 'warning');
+        }
+
+        if (!installable.length) {
+            return this.showConfirm({
+                title: 'Missing custom nodes',
+                message: `These packs are not installed and could not be matched in ComfyUI-Manager: ${missing.join(', ')}. ${launchLabel} anyway with the nodes that are present?`,
+                type: 'warning',
+                confirmText: launchLabel
+            });
+        }
+
+        const titles = installable.map((item) => item.title || item.name);
+        const unresolvedNames = unresolved.map((item) => item.name);
+        let message = `Install ${installable.length} pack${installable.length === 1 ? '' : 's'} from ComfyUI-Manager, then ${launchLabel.toLowerCase()}?\n\n${titles.join(', ')}`;
+        if (unresolvedNames.length) {
+            message += `\n\nCould not resolve: ${unresolvedNames.join(', ')}`;
+        }
+
+        const choice = await this.showConfirm({
+            title: 'Missing custom nodes',
+            message,
+            type: 'warning',
+            confirmText: `Install & ${launchLabel}`,
+            altText: `${launchLabel} anyway`
+        });
+        if (!choice) return false;
+        if (choice === 'alt') return true;
+
+        const isIntegrated = this.apiBase === '/mf_conductor';
+        if (!isIntegrated) {
+            this.switchMainTab('console');
+            this.showSplashScreen();
+            this.appendToConsole(`Installing ${installable.length} missing pack${installable.length === 1 ? '' : 's'}...`, 'info');
+            this.startConsolePolling();
+        } else {
+            this.showToast('info', `Installing ${installable.length} missing packs...`);
+        }
+
+        try {
+            const response = await fetch(`${this.apiBase}/api/workflows/install-missing`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ names: installable.map((item) => item.name) })
+            });
+            const data = await response.json();
+            const installed = data.installed || [];
+            const failed = data.failed || [];
+            if (installed.length) {
+                this.log(`Installed ${installed.length} pack${installed.length === 1 ? '' : 's'}`, 'success');
+                if (!isIntegrated) {
+                    this.appendToConsole(
+                        `Installed: ${installed.map((item) => item.title || item.folder).join(', ')}`,
+                        'success'
+                    );
+                }
+            }
+            if (failed.length) {
+                const failedNames = failed.map((item) => item.name).join(', ');
+                this.log(`Failed to install: ${failedNames}`, 'error');
+                this.showToast('warning', `Some packs failed: ${failedNames}`);
+                if (!isIntegrated) this.appendToConsole(`Failed: ${failedNames}`, 'error');
+            }
+            if (!data.success && !installed.length) {
+                this.showToast('error', data.message || 'Failed to install missing packs');
+                return false;
+            }
+        } catch (error) {
+            this.showToast('error', this.parseError(error, 'Failed to install missing packs'));
+            return false;
+        }
+        return true;
+    }
+
+    async launchSelectedWorkflows() {
+        const paths = this.selectedWorkflowList();
+        if (!paths.length) {
+            this.showToast('warning', 'Select one or more workflows first');
+            return;
+        }
+        return this.launchWorkflows(paths);
+    }
+
+    async launchWorkflow(relPath) {
+        return this.launchWorkflows([relPath]);
+    }
+
+    async launchWorkflows(relPaths) {
+        const paths = [...new Set((relPaths || []).filter(Boolean))];
+        if (!paths.length) return;
+        if (!(await this.loadWorkflowLaunchOptions())) return;
+        const launchSetup = {
+            profile: document.getElementById('workflow-launch-profile').value,
+            launch_flags: document.getElementById('workflow-launch-flags').value,
+            extra_nodes: Array.from(document.getElementById('workflow-extra-nodes').selectedOptions, option => option.value)
+        };
+
+        const missing = [...new Set(paths.flatMap((path) => {
+            const listed = this.workflows.find((wf) => wf.path === path);
+            return listed?.missing_folders || [];
+        }))];
+        if (missing.length && !(await this.confirmMissingWorkflowPacks(missing))) {
+            return;
+        }
+
+        const isIntegrated = this.apiBase === '/mf_conductor';
+        const names = paths.map((path) => this.workflows.find((wf) => wf.path === path)?.name || path);
+        const label = names.length === 1 ? names[0] : `${names.length} workflows`;
+        this.log(`Launching ${label}...`, 'info');
+
+        if (!isIntegrated) {
+            const restarting = this.comfyStatus === 'running' || this.comfyStatus === 'starting';
+            this.switchMainTab('console');
+            this.clearConsoleOutput();
+            this.showSplashScreen();
+            this.updateComfyStatus('starting');
+            this.appendToConsole(
+                restarting
+                    ? `Restarting ComfyUI for ${label}...`
+                    : `Launching ComfyUI for ${label}...`,
+                'info'
+            );
+            this.appendToConsole('Analyzing required packs and applying isolation...', 'info');
+            this.startConsolePolling();
+        }
+
+        try {
+            const response = await fetch(`${this.apiBase}/api/workflows/launch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: paths[0],
+                    paths,
+                    ...launchSetup
+                })
+            });
+            const data = await response.json();
+            if (data.success) {
+                if (isIntegrated) {
+                    document.getElementById('workflow-launch-status').textContent = `${data.message} ${data.launcher_path || ''}`;
+                    this.showToast('success', data.message || 'Isolation applied. Restart ComfyUI to use this set.');
+                    this.log(data.message || 'Workflow isolation applied', 'success');
+                } else {
+                    this.comfyPort = data.port || 8188;
+                    this.log('ComfyUI process started', 'success');
+                    this.showToast('success', `Launching ${label}...`);
+                    this.appendToConsole('ComfyUI process started', 'success');
+                    this.startConsolePolling();
+                    this.checkComfyServerReady();
+                }
+            } else {
+                this.log(`Failed to launch workflow: ${data.message}`, 'error');
+                if (!isIntegrated) {
+                    this.updateComfyStatus('error');
+                    this.appendToConsole(`Failed to launch: ${data.message}`, 'error');
+                }
+                this.showToast('error', data.message);
+            }
+        } catch (error) {
+            this.showToast('error', this.parseError(error, 'Failed to launch workflow'));
+            if (!isIntegrated) {
+                this.updateComfyStatus('error');
+            }
+        }
+    }
+
     async promptEnableInProfiles(nodeFolderName) {
         // Get list of profiles
         const profileNames = Object.keys(this.profiles);
@@ -1179,7 +2330,7 @@ class MFConductor {
             const isDefault = profile.is_default ? ' (default)' : '';
             return `
                 <label class="profile-checkbox-item">
-                    <input type="checkbox" name="profile" value="${this.escapeHtml(name)}" ${idx === 0 ? 'checked' : ''}>
+                    <input type="checkbox" name="profile" value="${this.escapeAttr(name)}" ${idx === 0 ? 'checked' : ''}>
                     <span>${this.escapeHtml(name)}${isDefault}</span>
                 </label>
             `;
@@ -1349,11 +2500,12 @@ class MFConductor {
         
         this.editingProfile = profileName;
         // If enabled list is empty, treat as "all nodes" (select all)
+        // Always use base_folder_name (without .disabled suffix) for consistency
         if (profile.enabled && profile.enabled.length > 0) {
-            this.profileSelectedNodes = new Set(profile.enabled);
+            this.profileSelectedNodes = new Set(profile.enabled.map(f => f.replace(/\.disabled$/, '')));
         } else {
             // Empty enabled = all nodes selected
-            this.profileSelectedNodes = new Set(this.nodes.map(n => n.folder_name));
+            this.profileSelectedNodes = new Set(this.nodes.map(n => n.base_folder_name || n.folder_name));
         }
         this.profileCustomFlags = (profile.custom_flags_list || []).map(f => 
             typeof f === 'string' ? { value: f, enabled: true } : f
@@ -1367,15 +2519,26 @@ class MFConductor {
         const editor = document.getElementById('profile-editor');
         if (!editor) return;
         
-        // Load nodes if not already loaded
-        if (this.nodes.length === 0) {
-            await this.loadNodes();
+        // Show the editor immediately with a loading state
+        document.getElementById('profile-editor-title').textContent = title;
+        editor.classList.add('show');
+        this._profileEditorOpen = true;
+        
+        // Always load fresh node and package data for the profile editor
+        // This is critical - we need complete, up-to-date data
+        // Use forceRefresh=true to bypass all caches and get a fresh scan
+        try {
+            await Promise.all([
+                this.loadNodes(false, true),  // forceFullLoad=false, forceRefresh=true
+                this.loadPackagesList()
+            ]);
+        } catch (e) {
+            console.error('Error loading profile editor data:', e);
+            // Continue anyway with whatever data we have
         }
         
-        // Load packages
-        await this.loadPackagesList();
-        
-        document.getElementById('profile-editor-title').textContent = title;
+        // If editor was closed while loading, bail
+        if (!this._profileEditorOpen) return;
         document.getElementById('profile-name-input').value = profile ? this.editingProfile : '';
         document.getElementById('profile-desc-input').value = profile?.description || '';
         document.getElementById('profile-avatar-preview').src = profile?.avatar || 'default.svg';
@@ -1384,16 +2547,22 @@ class MFConductor {
         // Initialize nodes - only if not already set by editProfile()
         // Profile saves 'enabled' array, not 'nodes'
         // Empty enabled list = all nodes (preset profiles use this)
+        // Always use base_folder_name (without .disabled suffix) for consistency
         if (profile?.enabled && profile.enabled.length > 0) {
-            // Editing existing profile with specific nodes
-            this.profileSelectedNodes = new Set(profile.enabled);
+            this.profileSelectedNodes = new Set(profile.enabled.map(f => f.replace(/\.disabled$/, '')));
         } else {
-            // New profile OR profile with empty enabled list: select all nodes
-            this.profileSelectedNodes = new Set(this.nodes.map(n => n.folder_name));
+            this.profileSelectedNodes = new Set(this.nodes.map(n => n.base_folder_name || n.folder_name));
         }
         
         // Always ensure required nodes are included
         this.requiredNodes.forEach(folder => this.profileSelectedNodes.add(folder));
+        
+        // Track all known folders for this editing session (so removed nodes appear in excluded list)
+        this._profileKnownFolders = new Set(this.profileSelectedNodes);
+        // Also add all nodes from this.nodes
+        for (const n of this.nodes) {
+            this._profileKnownFolders.add(n.base_folder_name || n.folder_name);
+        }
         
         // Initialize packages - all included by default (excluded_packages is what's NOT included)
         if (profile?.excluded_packages) {
@@ -1412,16 +2581,32 @@ class MFConductor {
             this.profileCustomFlags = [];
         }
         
-        // Load flags
-        if (profile?.flags) {
-            this.loadProfileEditorFlags(profile.flags);
-        } else {
-            this.clearProfileEditorFlags();
+        // Reset flag input and expanded group
+        this._flagSearchQuery = '';
+        this._expandedFlagGroup = null;
+        this._currentSuggestion = null;
+        this._matchingFlags = [];
+        this._suggestionIndex = 0;
+        const flagInput = document.getElementById('pe-flags-input');
+        const flagDropdown = document.getElementById('pe-flags-dropdown');
+        if (flagInput) {
+            flagInput.value = '';
+            flagInput._bound = false; // Allow rebinding
+        }
+        if (flagDropdown) {
+            flagDropdown.classList.add('hidden');
+            flagDropdown.innerHTML = '';
         }
         
-        // Render nodes and packages
+        // Load old-style flags into custom flags list (for backward compatibility)
+        if (profile?.flags) {
+            this.loadProfileEditorFlags(profile.flags);
+        }
+        
+        // Render nodes, packages, and flags accordion
         this.renderProfileEditorNodes();
         this.renderProfileEditorPackages();
+        this.renderFlagsAccordion();
         this.renderProfileEditorCustomFlags();
         
         // Bind tab switching
@@ -1429,8 +2614,6 @@ class MFConductor {
         
         // Bind events
         this.bindProfileEditorEvents();
-        
-        editor.classList.add('show');
     }
     
     closeProfileEditor() {
@@ -1438,6 +2621,8 @@ class MFConductor {
         if (editor) {
             editor.classList.remove('show');
         }
+        this._profileEditorOpen = false;
+        this._profileKnownFolders = null;
         this.editingProfile = null;
     }
     
@@ -1477,7 +2662,7 @@ class MFConductor {
         
         // Node transfers
         document.getElementById('pe-add-all-nodes')?.addEventListener('click', () => {
-            this.nodes.forEach(n => this.profileSelectedNodes.add(n.folder_name));
+            this.nodes.forEach(n => this.profileSelectedNodes.add(n.base_folder_name || n.folder_name));
             this.renderProfileEditorNodes();
         });
         
@@ -1619,21 +2804,6 @@ class MFConductor {
             this.renderProfileEditorPackages('', e.target.value);
         });
         
-        // Custom flags
-        const addCustomFlag = () => {
-            const input = document.getElementById('pe-custom-flag-input');
-            const flag = input?.value.trim();
-            if (flag && !this.profileCustomFlags.find(f => f.value === flag)) {
-                this.profileCustomFlags.push({ value: flag, enabled: true });
-                input.value = '';
-                this.renderProfileEditorCustomFlags();
-            }
-        };
-        
-        document.getElementById('pe-add-custom-flag')?.addEventListener('click', addCustomFlag);
-        document.getElementById('pe-custom-flag-input')?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') addCustomFlag();
-        });
     }
     
     pickProfileAvatar() {
@@ -1651,18 +2821,53 @@ class MFConductor {
         const availFilterLower = availFilter.toLowerCase();
         const selectedFilterLower = selectedFilter.toLowerCase();
         
-        // Excluded nodes (not in profile)
-        const available = this.nodes.filter(n => 
-            !this.profileSelectedNodes.has(n.folder_name) &&
-            (!availFilter || n.display_name.toLowerCase().includes(availFilterLower) || n.folder_name.toLowerCase().includes(availFilterLower))
-        );
+        // Build a map of all known nodes: folder -> {displayName, isInNodes}
+        // This ensures nodes show in Excluded even if they're not in this.nodes
+        const allKnownNodes = new Map();
         
-        availContainer.innerHTML = available.map(n => {
-            const isRequired = this.requiredNodes.has(n.folder_name);
+        // Add nodes from this.nodes
+        for (const n of this.nodes) {
+            const baseName = n.base_folder_name || n.folder_name;
+            allKnownNodes.set(baseName, { displayName: n.display_name, isInNodes: true });
+        }
+        
+        // Add any folders from profileSelectedNodes that aren't in this.nodes
+        // (these might be from a saved profile with nodes that have different names now)
+        for (const folder of this.profileSelectedNodes) {
+            if (!allKnownNodes.has(folder)) {
+                allKnownNodes.set(folder, { displayName: folder, isInNodes: false });
+            }
+        }
+        
+        // Track folders we've removed from profileSelectedNodes this session
+        // so they show in the excluded list
+        if (!this._profileKnownFolders) {
+            this._profileKnownFolders = new Set(this.profileSelectedNodes);
+        }
+        for (const folder of this._profileKnownFolders) {
+            if (!allKnownNodes.has(folder)) {
+                allKnownNodes.set(folder, { displayName: folder, isInNodes: false });
+            }
+        }
+        
+        // Excluded nodes (not in profile)
+        const available = [];
+        for (const [folder, info] of allKnownNodes) {
+            if (this.profileSelectedNodes.has(folder)) continue;
+            if (availFilter && !info.displayName.toLowerCase().includes(availFilterLower) && !folder.toLowerCase().includes(availFilterLower)) continue;
+            available.push({ folder, displayName: info.displayName });
+        }
+        
+        // Sort alphabetically
+        available.sort((a, b) => a.displayName.localeCompare(b.displayName));
+        
+        availContainer.innerHTML = available.map(({ folder, displayName }) => {
+            const isRequired = this.requiredNodes.has(folder);
+            const escapedFolder = this.escapeHtml(folder);
             return `
-                <div class="profile-node-item ${isRequired ? 'required-item' : ''}" data-folder="${this.escapeHtml(n.folder_name)}" 
-                     onclick="this.classList.toggle('selected')" ondblclick="app.peAddNode('${this.escapeHtml(n.folder_name)}')">
-                    <span class="node-name">${this.escapeHtml(n.display_name)}</span>
+                <div class="profile-node-item ${isRequired ? 'required-item' : ''}" data-folder="${escapedFolder}" 
+                     onclick="this.classList.toggle('selected')" ondblclick="app.peAddNode('${this.escapeJs(folder)}')">
+                    <span class="node-name">${this.escapeHtml(displayName)}</span>
                     ${isRequired ? '<span class="required-badge" title="Required for ComfyUI">Required</span>' : ''}
                 </div>
             `;
@@ -1671,28 +2876,27 @@ class MFConductor {
         if (availCount) availCount.textContent = available.length;
         
         // Selected nodes (in profile)
-        const selectedArray = Array.from(this.profileSelectedNodes);
-        const filtered = selectedArray.filter(folder => {
-            if (!selectedFilter) return true;
-            const node = this.nodes.find(n => n.folder_name === folder);
-            return node && (node.display_name.toLowerCase().includes(selectedFilterLower) || folder.toLowerCase().includes(selectedFilterLower));
+        const selected = [];
+        for (const folder of this.profileSelectedNodes) {
+            const info = allKnownNodes.get(folder) || { displayName: folder };
+            if (selectedFilter && !info.displayName.toLowerCase().includes(selectedFilterLower) && !folder.toLowerCase().includes(selectedFilterLower)) continue;
+            selected.push({ folder, displayName: info.displayName });
+        }
+        
+        // Sort: required items first, then alphabetically
+        selected.sort((a, b) => {
+            const aReq = this.requiredNodes.has(a.folder) ? 0 : 1;
+            const bReq = this.requiredNodes.has(b.folder) ? 0 : 1;
+            if (aReq !== bReq) return aReq - bReq;
+            return a.displayName.localeCompare(b.displayName);
         });
         
-        // Sort: required items first
-        filtered.sort((a, b) => {
-            const aReq = this.requiredNodes.has(a) ? 0 : 1;
-            const bReq = this.requiredNodes.has(b) ? 0 : 1;
-            return aReq - bReq;
-        });
-        
-        selectedContainer.innerHTML = filtered.map(folder => {
-            const node = this.nodes.find(n => n.folder_name === folder);
-            const displayName = node?.display_name || folder;
+        selectedContainer.innerHTML = selected.map(({ folder, displayName }) => {
             const isRequired = this.requiredNodes.has(folder);
             const escapedFolder = this.escapeHtml(folder);
             const onDblClick = isRequired 
                 ? "app.showToast('warning', 'This node is required for ComfyUI')" 
-                : `app.peRemoveNode('${escapedFolder}')`;
+                : `app.peRemoveNode('${this.escapeJs(folder)}')`;
             const onClick = isRequired ? '' : "this.classList.toggle('selected')";
             return `
                 <div class="profile-node-item ${isRequired ? 'required-item locked' : ''}" 
@@ -1783,7 +2987,7 @@ class MFConductor {
                 <div class="profile-node-item ${isRequired ? 'required-item' : ''}" 
                      data-pkg="${escapedName}" 
                      onclick="this.classList.toggle('selected')" 
-                     ondblclick="app.peIncludePackage('${escapedName}')">
+                     ondblclick="app.peIncludePackage('${this.escapeJs(pkg.name)}')">
                     <span class="node-name">${escapedName}</span>
                     <span class="node-version">${this.escapeHtml(pkg.version || '')}</span>
                     ${isRequired ? '<span class="required-badge warning" title="Required for ComfyUI - should be included!">Required</span>' : ''}
@@ -1796,7 +3000,7 @@ class MFConductor {
             const escapedName = this.escapeHtml(pkg.name);
             const onDblClick = isRequired 
                 ? "app.showToast('warning', 'This package is required for ComfyUI')" 
-                : `app.peExcludePackage('${escapedName}')`;
+                : `app.peExcludePackage('${this.escapeJs(pkg.name)}')`;
             const onClick = isRequired ? '' : "this.classList.toggle('selected')";
             return `
                 <div class="profile-node-item ${isRequired ? 'required-item locked' : ''}" 
@@ -1840,74 +3044,514 @@ class MFConductor {
     }
     
     renderProfileEditorCustomFlags() {
-        const container = document.getElementById('pe-custom-flags-list');
-        if (!container) return;
+        // Render tags in the inline tag input
+        const tagsContainer = document.getElementById('pe-flags-tags');
+        if (!tagsContainer) return;
         
-        container.innerHTML = this.profileCustomFlags.map((flag, index) => `
-            <div class="custom-flag-item">
-                <input type="checkbox" ${flag.enabled ? 'checked' : ''} 
-                    onchange="app.peToggleCustomFlag(${index}, this.checked)">
-                <span class="flag-text">${this.escapeHtml(flag.value)}</span>
-                <button class="flag-remove" onclick="app.peRemoveCustomFlag(${index})" title="Remove">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
-                        <path d="M18 6L6 18M6 6l12 12"/>
-                    </svg>
-                </button>
-            </div>
+        tagsContainer.innerHTML = this.profileCustomFlags.map((flag, idx) => `
+            <span class="flag-tag">
+                ${this.escapeHtml(flag.value)}
+                <button class="remove-tag" onclick="event.stopPropagation(); app.peRemoveCustomFlag(${idx})" title="Remove">&times;</button>
+            </span>
         `).join('');
-    }
-    
-    peToggleCustomFlag(index, enabled) {
-        if (this.profileCustomFlags[index]) {
-            this.profileCustomFlags[index].enabled = enabled;
-        }
     }
     
     peRemoveCustomFlag(index) {
         this.profileCustomFlags.splice(index, 1);
         this.renderProfileEditorCustomFlags();
+        this.renderFlagsAccordion();
     }
     
-    loadProfileEditorFlags(flags) {
-        this.clearProfileEditorFlags();
+    updateFlagGroupHeader(groupId) {
+        const groupEl = document.querySelector(`#pe-flags-accordion [data-group-id="${groupId}"]`);
+        if (!groupEl) return;
         
-        ['vram', 'attention', 'precision', 'vae', 'cache'].forEach(group => {
-            if (flags[group]) {
-                const input = document.querySelector(`#pe-tab-flags input[name="pe-${group}"][value="${flags[group]}"]`);
-                if (input) input.checked = true;
+        const group = this.comfyFlagGroups.find(g => g.id === groupId);
+        if (!group) return;
+        
+        const count = this.getActiveCountForGroup(group);
+        const header = groupEl.querySelector('.flag-group-header > div');
+        if (!header) return;
+        
+        // Find or create badge
+        let badge = header.querySelector('.flag-count-badge');
+        if (count > 0) {
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'flag-count-badge text-xs bg-accent-primary/20 text-accent-primary px-1.5 py-0.5 rounded';
+                header.appendChild(badge);
+            }
+            badge.textContent = count;
+        } else if (badge) {
+            badge.remove();
+        }
+    }
+    
+    // ==================== FLAG ACCORDION ====================
+    
+    renderFlagsAccordion() {
+        const container = document.getElementById('pe-flags-accordion');
+        if (!container) return;
+        
+        const searchQuery = this._flagSearchQuery.toLowerCase().trim();
+        const isSearching = searchQuery.length > 0;
+        
+        container.innerHTML = '';
+        
+        this.comfyFlagGroups.forEach(group => {
+            // Skip custom group - flags are shown inline in the tag input
+            if (group.type === 'custom') return;
+            
+            const groupEl = this.createFlagGroup(group, searchQuery, isSearching);
+            if (groupEl) {
+                container.appendChild(groupEl);
             }
         });
         
-        document.querySelectorAll('#pe-tab-flags .flag-option input[type="checkbox"]').forEach(cb => {
-            const baseName = cb.name.replace('pe-', '');
-            cb.checked = flags[baseName] === cb.value;
+        // Bind flag input with autocomplete
+        this.bindFlagInputAutocomplete();
+    }
+    
+    bindFlagInputAutocomplete() {
+        const input = document.getElementById('pe-flags-input');
+        const dropdown = document.getElementById('pe-flags-dropdown');
+        const tagsContainer = document.getElementById('pe-flags-tags');
+        const tagInput = document.getElementById('pe-flags-tag-input');
+        
+        if (!input || input._bound) return;
+        input._bound = true;
+        
+        // Build flat list of all flags
+        this._allFlagsFlat = [];
+        this.comfyFlagGroups.forEach(group => {
+            if (group.type === 'custom') return;
+            (group.flags || []).forEach(flag => {
+                if (flag.value) {
+                    this._allFlagsFlat.push({ ...flag, groupId: group.id, groupName: group.name });
+                }
+            });
+            (group.extraCheckboxes || []).forEach(flag => {
+                if (flag.value) {
+                    this._allFlagsFlat.push({ ...flag, groupId: group.id, groupName: group.name });
+                }
+            });
+        });
+        
+        this._matchingFlags = [];
+        this._highlightIndex = -1;
+        
+        // Click on container focuses input
+        tagInput?.addEventListener('click', () => input.focus());
+        
+        const renderTags = () => {
+            if (!tagsContainer) return;
+            tagsContainer.innerHTML = this.profileCustomFlags.map((flag, idx) => `
+                <span class="flag-tag">
+                    ${this.escapeHtml(flag.value)}
+                    <button class="remove-tag" data-index="${idx}" title="Remove">&times;</button>
+                </span>
+            `).join('');
+        };
+        
+        // Remove tag click handler
+        tagsContainer?.addEventListener('click', (e) => {
+            const btn = e.target.closest('.remove-tag');
+            if (btn) {
+                e.stopPropagation();
+                const idx = parseInt(btn.dataset.index, 10);
+                this.profileCustomFlags.splice(idx, 1);
+                renderTags();
+                this.renderFlagsAccordion();
+            }
+        });
+        
+        const updateDropdown = () => {
+            const value = input.value.trim();
+            this._flagSearchQuery = value;
+            
+            if (value.length === 0) {
+                dropdown.classList.add('hidden');
+                dropdown.innerHTML = '';
+                this._matchingFlags = [];
+                this._highlightIndex = -1;
+                this.renderFlagsAccordion();
+                return;
+            }
+            
+            const lowerValue = value.toLowerCase();
+            const addedValues = new Set(this.profileCustomFlags.map(f => f.value));
+            
+            // Find matches
+            const startsWithMatches = this._allFlagsFlat.filter(f => 
+                f.value.toLowerCase().startsWith(lowerValue)
+            );
+            const containsMatches = this._allFlagsFlat.filter(f => 
+                !f.value.toLowerCase().startsWith(lowerValue) &&
+                (f.value.toLowerCase().includes(lowerValue) ||
+                 f.desc.toLowerCase().includes(lowerValue))
+            );
+            
+            this._matchingFlags = [...startsWithMatches, ...containsMatches].slice(0, 8);
+            this._highlightIndex = this._matchingFlags.length > 0 ? 0 : -1;
+            
+            if (this._matchingFlags.length === 0) {
+                dropdown.classList.add('hidden');
+                dropdown.innerHTML = '';
+            } else {
+                dropdown.innerHTML = this._matchingFlags.map((flag, idx) => {
+                    const isAdded = addedValues.has(flag.value);
+                    return `
+                        <div class="flags-dropdown-item ${idx === this._highlightIndex ? 'highlighted' : ''} ${isAdded ? 'already-added' : ''}" data-index="${idx}">
+                            <span class="flag-value">${this.escapeHtml(flag.value)}</span>
+                            <span class="flag-desc">${this.escapeHtml(flag.desc)}</span>
+                        </div>
+                    `;
+                }).join('');
+                dropdown.classList.remove('hidden');
+            }
+            
+            this.renderFlagsAccordion();
+        };
+        
+        const addFlag = (value) => {
+            if (!value) return;
+            const exists = this.profileCustomFlags.some(f => f.value === value);
+            if (!exists) {
+                this.profileCustomFlags.push({ value, enabled: true });
+                renderTags();
+                this.renderFlagsAccordion();
+            }
+            input.value = '';
+            dropdown.classList.add('hidden');
+            dropdown.innerHTML = '';
+            this._flagSearchQuery = '';
+            this._matchingFlags = [];
+            this._highlightIndex = -1;
+            input.focus();
+        };
+        
+        const highlightItem = (index) => {
+            this._highlightIndex = index;
+            dropdown.querySelectorAll('.flags-dropdown-item').forEach((el, i) => {
+                el.classList.toggle('highlighted', i === index);
+            });
+            const highlighted = dropdown.querySelector('.highlighted');
+            if (highlighted) highlighted.scrollIntoView({ block: 'nearest' });
+        };
+        
+        input.addEventListener('input', updateDropdown);
+        
+        input.addEventListener('keydown', (e) => {
+            const count = this._matchingFlags.length;
+            
+            if (e.key === 'ArrowDown' && count > 0) {
+                e.preventDefault();
+                highlightItem((this._highlightIndex + 1) % count);
+            } else if (e.key === 'ArrowUp' && count > 0) {
+                e.preventDefault();
+                highlightItem((this._highlightIndex - 1 + count) % count);
+            } else if (e.key === 'Tab' || e.key === 'Enter') {
+                if (this._highlightIndex >= 0 && this._matchingFlags[this._highlightIndex]) {
+                    e.preventDefault();
+                    addFlag(this._matchingFlags[this._highlightIndex].value);
+                } else if (input.value.trim()) {
+                    e.preventDefault();
+                    addFlag(input.value.trim());
+                }
+            } else if (e.key === 'Backspace' && input.value === '' && this.profileCustomFlags.length > 0) {
+                // Remove last tag on backspace when input is empty
+                this.profileCustomFlags.pop();
+                renderTags();
+                this.renderFlagsAccordion();
+            } else if (e.key === 'Escape') {
+                dropdown.classList.add('hidden');
+                input.value = '';
+                this._flagSearchQuery = '';
+                this.renderFlagsAccordion();
+            }
+        });
+        
+        // Click on dropdown item
+        dropdown.addEventListener('click', (e) => {
+            const item = e.target.closest('.flags-dropdown-item');
+            if (item && !item.classList.contains('already-added')) {
+                const idx = parseInt(item.dataset.index, 10);
+                if (this._matchingFlags[idx]) {
+                    addFlag(this._matchingFlags[idx].value);
+                }
+            }
+        });
+        
+        // Hide dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.flags-tag-input-wrapper')) {
+                dropdown.classList.add('hidden');
+            }
+        });
+        
+        // Initial render of existing tags
+        renderTags();
+    }
+    
+    clearFlagInput() {
+        const input = document.getElementById('pe-flags-input');
+        const dropdown = document.getElementById('pe-flags-dropdown');
+        if (input) input.value = '';
+        if (dropdown) {
+            dropdown.classList.add('hidden');
+            dropdown.innerHTML = '';
+        }
+        this._flagSearchQuery = '';
+        this._matchingFlags = [];
+        this._highlightIndex = -1;
+        this.renderFlagsAccordion();
+    }
+    
+    addCustomFlag(value) {
+        if (!value) return;
+        
+        // Check if already exists
+        const existing = this.profileCustomFlags.find(f => f.value === value);
+        if (existing) {
+            return; // Already added
+        }
+        
+        this.profileCustomFlags.push({ value, enabled: true });
+        this.renderProfileEditorCustomFlags();
+        this.renderFlagsAccordion();
+    }
+    
+    createFlagGroup(group, searchQuery, isSearching) {
+        // Filter flags based on search
+        let matchingFlags = [];
+        let hasMatch = false;
+        
+        if (group.type === 'custom') {
+            // Custom flags group always shows if searching for "custom" or empty search
+            hasMatch = !isSearching || 'custom flags'.includes(searchQuery);
+        } else {
+            matchingFlags = (group.flags || []).filter(flag => {
+                if (!isSearching) return true;
+                return flag.label.toLowerCase().includes(searchQuery) || 
+                       flag.desc.toLowerCase().includes(searchQuery) ||
+                       group.name.toLowerCase().includes(searchQuery);
+            });
+            
+            // Also check extra checkboxes
+            const matchingExtras = (group.extraCheckboxes || []).filter(flag => {
+                if (!isSearching) return true;
+                return flag.label.toLowerCase().includes(searchQuery) || 
+                       flag.desc.toLowerCase().includes(searchQuery);
+            });
+            
+            hasMatch = matchingFlags.length > 0 || matchingExtras.length > 0 || 
+                       (!isSearching) || group.name.toLowerCase().includes(searchQuery);
+            
+            if (isSearching && matchingFlags.length === 0 && matchingExtras.length === 0 && 
+                !group.name.toLowerCase().includes(searchQuery)) {
+                return null; // Hide group if no matches
+            }
+        }
+        
+        const isExpanded = isSearching || this._expandedFlagGroup === group.id;
+        const activeCount = this.getActiveCountForGroup(group);
+        
+        const groupEl = document.createElement('div');
+        groupEl.className = 'flag-group-accordion bg-card/50 rounded-lg border border-border-subtle overflow-hidden';
+        groupEl.dataset.groupId = group.id;
+        
+        // Header
+        const header = document.createElement('div');
+        header.className = 'flag-group-header flex items-center justify-between p-3 cursor-pointer hover:bg-white/5 transition-colors';
+        header.innerHTML = `
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-chevron-right text-xs text-slate-500 transition-transform ${isExpanded ? 'rotate-90' : ''}"></i>
+                <span class="text-sm font-medium text-white">${group.name}</span>
+                ${activeCount > 0 ? `<span class="text-xs bg-accent-primary/20 text-accent-primary px-1.5 py-0.5 rounded">${activeCount}</span>` : ''}
+            </div>
+        `;
+        
+        if (!isSearching) {
+            header.addEventListener('click', () => this.toggleFlagGroup(group.id));
+        }
+        
+        groupEl.appendChild(header);
+        
+        // Content
+        const content = document.createElement('div');
+        content.className = `flag-group-content border-t border-border-subtle ${isExpanded ? '' : 'hidden'}`;
+        content.style.maxHeight = isExpanded ? 'none' : '0';
+        
+        if (group.type === 'custom') {
+            // Custom flags are shown in the tag input above, so just show a message
+            content.innerHTML = `
+                <div class="p-3 text-xs text-slate-500">
+                    Your selected flags appear in the input field above. Type to search and add more flags.
+                </div>
+            `;
+        } else {
+            const flagsHtml = this.renderFlagOptions(group, searchQuery, isSearching);
+            content.innerHTML = `<div class="p-3 space-y-2 text-xs">${flagsHtml}</div>`;
+        }
+        
+        groupEl.appendChild(content);
+        return groupEl;
+    }
+    
+    renderFlagOptions(group, searchQuery, isSearching) {
+        let html = '<div class="flex flex-wrap">';
+        
+        // Check which flags are already in custom flags list
+        const customFlagValues = new Set(this.profileCustomFlags.map(f => f.value));
+        
+        (group.flags || []).forEach(flag => {
+            // Skip "Default" option in the list - it's implicit when nothing is selected
+            if (!flag.value) return;
+            
+            const matchesSearch = !isSearching || 
+                flag.label.toLowerCase().includes(searchQuery) || 
+                flag.desc.toLowerCase().includes(searchQuery) ||
+                group.name.toLowerCase().includes(searchQuery);
+            
+            if (!matchesSearch && isSearching) return;
+            
+            const highlight = isSearching && (flag.label.toLowerCase().includes(searchQuery) || flag.desc.toLowerCase().includes(searchQuery));
+            const isAdded = customFlagValues.has(flag.value);
+            
+            html += `
+                <div class="flag-item ${isAdded ? 'selected' : ''} ${highlight ? 'highlight' : ''}" 
+                    onclick="app.addFlagFromList('${flag.value}')" 
+                    title="${flag.desc}">
+                    <span>${flag.label}</span>
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        
+        // Extra checkboxes (like --cpu-vae in VAE group)
+        if (group.extraCheckboxes && group.extraCheckboxes.length > 0) {
+            html += '<div class="border-t border-border-subtle mt-2 pt-2"><div class="flex flex-wrap">';
+            group.extraCheckboxes.forEach(flag => {
+                const matchesSearch = !isSearching || 
+                    flag.label.toLowerCase().includes(searchQuery) || 
+                    flag.desc.toLowerCase().includes(searchQuery);
+                
+                if (!matchesSearch && isSearching) return;
+                
+                const highlight = isSearching && (flag.label.toLowerCase().includes(searchQuery) || flag.desc.toLowerCase().includes(searchQuery));
+                const isAdded = customFlagValues.has(flag.value);
+                
+                html += `
+                    <div class="flag-item ${isAdded ? 'selected' : ''} ${highlight ? 'highlight' : ''}" 
+                        onclick="app.addFlagFromList('${flag.value}')" 
+                        title="${flag.desc}">
+                        <span>${flag.label}</span>
+                    </div>
+                `;
+            });
+            html += '</div></div>';
+        }
+        
+        return html;
+    }
+    
+    addFlagFromList(value) {
+        // Toggle - if already in custom flags, remove it; otherwise add it
+        const existingIndex = this.profileCustomFlags.findIndex(f => f.value === value);
+        if (existingIndex >= 0) {
+            this.profileCustomFlags.splice(existingIndex, 1);
+        } else {
+            this.profileCustomFlags.push({ value, enabled: true });
+        }
+        this.renderProfileEditorCustomFlags();
+        this.renderFlagsAccordion();
+    }
+    
+    toggleFlagGroup(groupId) {
+        if (this._expandedFlagGroup === groupId) {
+            this._expandedFlagGroup = null;
+        } else {
+            this._expandedFlagGroup = groupId;
+        }
+        this.renderFlagsAccordion();
+    }
+    
+    getActiveCountForGroup(group) {
+        if (group.type === 'custom') {
+            return this.profileCustomFlags.filter(f => f.enabled).length;
+        }
+        
+        // Count how many flags from this group are in custom flags
+        const customFlagValues = new Set(this.profileCustomFlags.filter(f => f.enabled).map(f => f.value));
+        let count = 0;
+        
+        (group.flags || []).forEach(flag => {
+            if (flag.value && customFlagValues.has(flag.value)) {
+                count++;
+            }
+        });
+        
+        (group.extraCheckboxes || []).forEach(flag => {
+            if (flag.value && customFlagValues.has(flag.value)) {
+                count++;
+            }
+        });
+        
+        return count;
+    }
+    
+    loadProfileEditorFlags(flags) {
+        // Convert old-style flags object to custom flags list
+        // This adds them to profileCustomFlags if not already there
+        Object.entries(flags).forEach(([key, value]) => {
+            if (!value) return;
+            
+            // Check if this flag is already in custom flags
+            const existing = this.profileCustomFlags.find(f => f.value === value);
+            if (!existing) {
+                this.profileCustomFlags.push({ value, enabled: true });
+            }
         });
     }
     
     clearProfileEditorFlags() {
-        ['vram', 'attention', 'precision', 'vae', 'cache'].forEach(group => {
-            const defaultInput = document.querySelector(`#pe-tab-flags input[name="pe-${group}"][value=""]`);
-            if (defaultInput) defaultInput.checked = true;
-        });
-        
-        document.querySelectorAll('#pe-tab-flags .flag-option input[type="checkbox"]').forEach(cb => {
-            cb.checked = false;
-        });
+        // Nothing to clear - custom flags are managed separately
     }
     
     getProfileEditorFlags() {
+        // Return flags in the old format for backward compatibility
         const flags = {};
         
-        ['vram', 'attention', 'precision', 'vae', 'cache'].forEach(group => {
-            const checked = document.querySelector(`#pe-tab-flags input[name="pe-${group}"]:checked`);
-            if (checked && checked.value) {
-                flags[group] = checked.value;
+        this.profileCustomFlags.forEach(flag => {
+            if (!flag.enabled || !flag.value) return;
+            
+            // Find which group this flag belongs to and use that as the key
+            let foundGroup = null;
+            for (const group of this.comfyFlagGroups) {
+                if (group.type === 'custom') continue;
+                
+                const matchingFlag = (group.flags || []).find(f => f.value === flag.value);
+                if (matchingFlag) {
+                    foundGroup = group;
+                    break;
+                }
+                
+                const matchingExtra = (group.extraCheckboxes || []).find(f => f.value === flag.value);
+                if (matchingExtra) {
+                    foundGroup = group;
+                    break;
+                }
             }
-        });
-        
-        document.querySelectorAll('#pe-tab-flags .flag-option input[type="checkbox"]:checked').forEach(cb => {
-            const baseName = cb.name.replace('pe-', '');
-            flags[baseName] = cb.value;
+            
+            if (foundGroup) {
+                // Use group ID as key for known flags
+                flags[foundGroup.id] = flag.value;
+            } else {
+                // For truly custom flags, use a sanitized key
+                const key = flag.value.replace(/^--/, '').replace(/-/g, '_').replace(/\s+.*$/, '');
+                flags[key] = flag.value;
+            }
         });
         
         return flags;
@@ -1930,8 +3574,11 @@ class MFConductor {
         
         const enabled = Array.from(this.profileSelectedNodes);
         const disabled = this.nodes
-            .filter(n => !this.profileSelectedNodes.has(n.folder_name) && !this.requiredNodes.has(n.folder_name))
-            .map(n => n.folder_name);
+            .filter(n => {
+                const baseName = n.base_folder_name || n.folder_name;
+                return !this.profileSelectedNodes.has(baseName) && !this.requiredNodes.has(baseName);
+            })
+            .map(n => n.base_folder_name || n.folder_name);
         
         const flags = this.getProfileEditorFlags();
         const customFlagsList = this.profileCustomFlags;
@@ -2920,7 +4567,7 @@ class MFConductor {
         
         if (workflowViewBtn) {
             workflowViewBtn.addEventListener('click', () => {
-                this.filesViewMode = this.filesViewMode === 'workflow' ? 'grid' : 'workflow';
+                this.filesViewMode = 'workflow';
                 this.updateViewToggleButtons();
                 this.renderFilesGrid();
                 this.saveUserPreferences();
@@ -2994,6 +4641,7 @@ class MFConductor {
         
         // Show/hide upgrade all button
         if (upgradeAllBtn) {
+            upgradeAllBtn.hidden = outdated === 0;
             upgradeAllBtn.style.display = outdated > 0 ? 'inline-flex' : 'none';
         }
     }
@@ -3016,9 +4664,10 @@ class MFConductor {
         
         // Sort
         filtered.sort((a, b) => {
-            if (sortBy === 'name') return a.name.localeCompare(b.name);
-            if (sortBy === 'version') return (a.version || '').localeCompare(b.version || '');
-            return 0;
+            let comparison = a.name.localeCompare(b.name);
+            if (sortBy === 'version') comparison = (a.version || '').localeCompare(b.version || '', undefined, { numeric: true }) || comparison;
+            if (sortBy === 'updated') comparison = Number(Boolean(b.hasUpdate)) - Number(Boolean(a.hasUpdate)) || comparison;
+            return this.packagesSortDir === 'desc' ? -comparison : comparison;
         });
         
         // Set view mode class
@@ -3036,8 +4685,8 @@ class MFConductor {
             const pypiUrl = `https://pypi.org/project/${encodeURIComponent(pkg.name)}/`;
             const hasDesc = pkg.summary && pkg.summary.trim();
             return `
-                <div class="package-item ${isOutdated ? 'outdated' : ''} ${hasDesc ? '' : 'no-desc'}" data-package="${this.escapeHtml(pkg.name)}">
-                    <div class="package-info" onclick="app.togglePackageDetails('${this.escapeHtml(pkg.name)}')">
+                <div class="package-item ${isOutdated ? 'outdated' : ''} ${hasDesc ? '' : 'no-desc'}" data-package="${this.escapeAttr(pkg.name)}">
+                    <div class="package-info" onclick="app.togglePackageDetails('${this.escapeJs(pkg.name)}')">
                         <div class="package-header">
                             <span class="package-name">${this.escapeHtml(pkg.name)}</span>
                             <span class="package-version ${isOutdated ? 'outdated' : ''}">${this.escapeHtml(pkg.version || 'unknown')}</span>
@@ -3069,19 +4718,19 @@ class MFConductor {
                         </div>
                     </div>
                     <div class="package-actions">
-                        <button class="btn ${isOutdated ? 'btn-success' : 'btn-primary'} btn-sm package-upgrade-btn" onclick="app.checkAndUpgradePackage('${this.escapeHtml(pkg.name)}')" title="${isOutdated ? `Update available: ${pkg.latestVersion}` : 'Check for updates & upgrade'}">
+                        <button class="btn ${isOutdated ? 'btn-success' : 'btn-primary'} btn-sm package-upgrade-btn" onclick="app.checkAndUpgradePackage('${this.escapeJs(pkg.name)}')" title="${isOutdated ? `Update available: ${pkg.latestVersion}` : 'Check for updates & upgrade'}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                 <path d="M12 19V5M5 12l7-7 7 7"/>
                             </svg>
                             ${isOutdated ? 'Update' : 'Upgrade'}
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="app.reinstallPackage('${this.escapeHtml(pkg.name)}')" title="Reinstall current version">
+                        <button class="btn btn-secondary btn-sm" onclick="app.reinstallPackage('${this.escapeJs(pkg.name)}')" title="Reinstall current version">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                 <path d="M23 4v6h-6"/>
                                 <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
                             </svg>
                         </button>
-                        <button class="btn btn-danger btn-sm" onclick="app.uninstallPackage('${this.escapeHtml(pkg.name)}')" title="Uninstall">
+                        <button class="btn btn-danger btn-sm" onclick="app.uninstallPackage('${this.escapeJs(pkg.name)}')" title="Uninstall">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                 <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                             </svg>
@@ -3135,7 +4784,8 @@ class MFConductor {
             
             // Start the check (returns immediately with job_id)
             const startResponse = await fetch(`${this.apiBase}/api/packages/check-updates`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const startData = await startResponse.json();
@@ -4213,7 +5863,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/comfy/stop`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -4240,13 +5891,15 @@ class MFConductor {
     }
     
     async restartComfyUI() {
+        this.clearConsoleOutput();
         this.log('Restarting ComfyUI...', 'info');
         this.appendToConsole('Restarting ComfyUI...', 'info');
         this.updateComfyStatus('starting');
         
         try {
             const response = await fetch(`${this.apiBase}/api/comfy/restart`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -4284,9 +5937,11 @@ class MFConductor {
     
     // Console output management
     startConsolePolling() {
-        if (this.consolePolling) return;
-        
-        this.consolePolling = setInterval(() => this.pollConsoleOutput(), 2000);
+        // A launch completion invalidates status requests from before the spawn.
+        this._consolePollEpoch = (this._consolePollEpoch || 0) + 1;
+        if (this.consolePolling) clearInterval(this.consolePolling);
+        this.pollConsoleOutput();
+        this.consolePolling = setInterval(() => this.pollConsoleOutput(), 400);
     }
     
     stopConsolePolling() {
@@ -4297,9 +5952,11 @@ class MFConductor {
     }
     
     async pollConsoleOutput() {
+        const epoch = this._consolePollEpoch;
         try {
             const response = await fetch(`${this.apiBase}/api/comfy/output`);
             const data = await response.json();
+            if (epoch !== this._consolePollEpoch) return;
             
             if (data.success) {
                 // Update status
@@ -4370,7 +6027,7 @@ class MFConductor {
                     // Remove [MF Conductor] prefix since we're already in MF Conductor console
                     let message = logEntry.message || '';
                     if (message.startsWith('[MF Conductor] ')) {
-                        message = message.substring(16); // Remove '[MF Conductor] ' prefix
+                    message = message.substring('[MF Conductor] '.length);
                     }
                     this.log(message, logEntry.type || 'info');
                 }
@@ -4415,7 +6072,7 @@ class MFConductor {
                 }
                 this.log(`ComfyUI server ready at http://127.0.0.1:${port}`, 'success');
                 this.appendToConsole(`✓ ComfyUI server ready at http://127.0.0.1:${port}`, 'success');
-                this.updateComfyControls();
+                this.updateComfyStatus('running', null, this.comfyManaged !== false, port);
             }
         } catch (error) {
             // Network error or timeout - server not ready yet
@@ -5047,7 +6704,7 @@ class MFConductor {
         });
     }
     
-    async loadNodes() {
+    async loadNodes(forceFullLoad = false, forceRefresh = false) {
         this.showLoading(true);
         this.log('Loading custom nodes...', 'info');
         
@@ -5070,12 +6727,19 @@ class MFConductor {
                 return { response, data, base };
             };
             
-            let { response, data, base } = await tryFetch(this.apiBase, '?fast=1');
+            // Build query params
+            let queryParam = '';
+            if (forceRefresh) {
+                queryParam = '?refresh=1';
+            } else if (!forceFullLoad) {
+                queryParam = '?fast=1';
+            }
+            let { response, data, base } = await tryFetch(this.apiBase, queryParam);
             
             if (!response.ok) {
                 const preferAlt = this.apiBase === '/mf_conductor' ? '' : '/mf_conductor';
                 if (this.apiBase !== preferAlt) {
-                    const alt = await tryFetch(preferAlt, '?fast=1');
+                    const alt = await tryFetch(preferAlt, queryParam);
                     if (alt.response.ok) {
                         this.apiBase = alt.base;
                         response = alt.response;
@@ -5093,9 +6757,18 @@ class MFConductor {
             this.nodes = data.nodes || [];
             
             if (this.totalNodesEl) this.totalNodesEl.textContent = this.nodes.length;
-            if (this.scanTimeEl) this.scanTimeEl.textContent = `Last scan: ${this.formatDate(data.scanned_at)}`;
+            if (this.scanTimeEl) {
+                if (data.scanning) {
+                    this.scanTimeEl.textContent = 'Scanning...';
+                } else {
+                    this.scanTimeEl.textContent = `Last scan: ${this.formatDate(data.scanned_at)}`;
+                }
+            }
             
-            this.log(`Loaded ${this.nodes.length} custom nodes successfully`, 'success');
+            const msg = data.scanning 
+                ? `Loaded ${this.nodes.length} nodes (full scan in progress...)`
+                : `Loaded ${this.nodes.length} custom nodes successfully`;
+            this.log(msg, data.scanning ? 'info' : 'success');
             this.filterNodes();
         } catch (error) {
             console.error('Error loading nodes:', error);
@@ -5113,7 +6786,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/nodes/refresh`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             if (!response.ok) throw new Error('Failed to refresh nodes');
             
@@ -5521,7 +7195,7 @@ class MFConductor {
                         </svg>
                     </a>
                 ` : ''}
-                <button class="btn btn-secondary" onclick="event.stopPropagation(); app.openNodeDetails('${this.escapeHtml(node.folder_name)}')" title="Details">
+                <button class="btn btn-secondary" onclick="event.stopPropagation(); app.openNodeDetails('${this.escapeJs(node.folder_name)}')" title="Details">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="1"/>
                         <circle cx="19" cy="12" r="1"/>
@@ -5601,7 +7275,7 @@ class MFConductor {
                     <div class="node-folder">${this.escapeHtml(node.folder_name)}</div>
                 </div>
                 <div class="node-header-actions">
-                    <button class="favorite-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); app.toggleFavorite('${this.escapeHtml(node.folder_name)}')" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}">
+                    <button class="favorite-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); app.toggleFavorite('${this.escapeJs(node.folder_name)}')" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}">
                         <svg viewBox="0 0 24 24" fill="${isFav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
                             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                         </svg>
@@ -5624,7 +7298,7 @@ class MFConductor {
                         GitHub
                     </a>
                 ` : ''}
-                <button class="btn btn-secondary node-action-btn" onclick="event.stopPropagation(); app.openNodeDetails('${this.escapeHtml(node.folder_name)}')">
+                <button class="btn btn-secondary node-action-btn" onclick="event.stopPropagation(); app.openNodeDetails('${this.escapeJs(node.folder_name)}')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <circle cx="12" cy="12" r="3"/>
                         <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
@@ -5744,7 +7418,7 @@ class MFConductor {
                                 <div class="detail-section-label">Note</div>
                                 <textarea class="note-input" 
                                           placeholder="Add a note..."
-                                          onchange="app.setNote('${this.escapeHtml(node.folder_name)}', this.value)">${this.escapeHtml(note)}</textarea>
+                                          onchange="app.setNote('${this.escapeJs(node.folder_name)}', this.value)">${this.escapeHtml(note)}</textarea>
                             </div>
                             
                             <div class="expanded-detail-tags">
@@ -5753,13 +7427,13 @@ class MFConductor {
                                     ${tags.map(tag => `
                                         <span class="tag-pill">
                                             ${this.escapeHtml(tag)}
-                                            <button onclick="app.removeTagFromNode('${this.escapeHtml(node.folder_name)}', '${this.escapeHtml(tag)}')">&times;</button>
+                                            <button onclick="app.removeTagFromNode('${this.escapeJs(node.folder_name)}', '${this.escapeJs(tag)}')">&times;</button>
                                         </span>
                                     `).join('')}
                                     <input type="text" 
                                            class="tags-add-input" 
                                            placeholder="Add tag..."
-                                           onkeydown="if(event.key==='Enter'){app.addTagToNode('${this.escapeHtml(node.folder_name)}', this.value); this.value='';}"
+                                           onkeydown="if(event.key==='Enter'){app.addTagToNode('${this.escapeJs(node.folder_name)}', this.value); this.value='';}"
                                     >
                                 </div>
                             </div>
@@ -5780,7 +7454,7 @@ class MFConductor {
                 
                 <div class="expanded-detail-actions">
                     ${node.is_git_repo ? `
-                    <button class="btn btn-primary" onclick="app.updateNodeInline('${this.escapeHtml(node.folder_name)}')">
+                    <button class="btn btn-primary" onclick="app.updateNodeInline('${this.escapeJs(node.folder_name)}')">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M23 4v6h-6"/>
                             <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
@@ -5796,27 +7470,27 @@ class MFConductor {
                         GitHub
                     </a>
                     ` : ''}
-                    <button class="btn btn-secondary" onclick="app.openFolderInline('${this.escapeHtml(node.folder_name)}')">
+                    <button class="btn btn-secondary" onclick="app.openFolderInline('${this.escapeJs(node.folder_name)}')">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
                         </svg>
                         Open Folder
                     </button>
-                    <button class="btn ${isFav ? 'btn-warning' : 'btn-secondary'}" onclick="app.toggleFavorite('${this.escapeHtml(node.folder_name)}')">
+                    <button class="btn ${isFav ? 'btn-warning' : 'btn-secondary'}" onclick="app.toggleFavorite('${this.escapeJs(node.folder_name)}')">
                         <svg viewBox="0 0 24 24" fill="${isFav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                         </svg>
                         ${isFav ? 'Favorited' : 'Favorite'}
                     </button>
                     <div class="action-spacer"></div>
-                    <button class="btn btn-warning" onclick="app.deactivateNodeInline('${this.escapeHtml(node.folder_name)}')">
+                    <button class="btn btn-warning" onclick="app.deactivateNodeInline('${this.escapeJs(node.folder_name)}')">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <circle cx="12" cy="12" r="10"/>
                             <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
                         </svg>
                         Deactivate
                     </button>
-                    <button class="btn btn-danger" onclick="app.removeNodeInline('${this.escapeHtml(node.folder_name)}')">
+                    <button class="btn btn-danger" onclick="app.removeNodeInline('${this.escapeJs(node.folder_name)}')">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                         </svg>
@@ -5875,7 +7549,7 @@ class MFConductor {
                             <line x1="9" y1="9" x2="15" y2="15"/>
                         </svg>`;
                         statusText = 'Not installed';
-                        hint = `<span class="requirement-install-hint" data-package="${this.escapeHtml(req.raw || req.name)}" data-name="${this.escapeHtml(displayName)}" data-folder="${folderName}">Click to install</span>`;
+                        hint = `<span class="requirement-install-hint" data-package="${this.escapeHtml(req.raw || req.name)}" data-name="${this.escapeHtml(displayName)}" data-folder="${this.escapeAttr(folderName)}">Click to install</span>`;
                         break;
                     case 'warning':
                         icon = `<svg class="requirement-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
@@ -5947,7 +7621,7 @@ class MFConductor {
         this.log(`Installing package: ${rawSpec}`, 'info');
         
         try {
-            const response = await fetch(`${this.apiBase}/api/install-package`, {
+            const response = await fetch(`${this.apiBase}/api/packages/install`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ package_name: rawSpec })
@@ -5979,7 +7653,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/nodes/${folderName}/update`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -5999,7 +7674,7 @@ class MFConductor {
     
     async openFolderInline(folderName) {
         try {
-            await fetch(`${this.apiBase}/api/nodes/${folderName}/open-folder`, { method: 'POST' });
+            await fetch(`${this.apiBase}/api/nodes/${folderName}/open-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
         } catch (error) {
             this.showToast('error', 'Failed to open folder');
         }
@@ -6021,7 +7696,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/nodes/${folderName}/deactivate`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -6071,7 +7747,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/nodes/${folderName}/remove`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -6302,7 +7979,7 @@ class MFConductor {
         this.log(`Installing package: ${rawSpec}`, 'info');
         
         try {
-            const response = await fetch(`${this.apiBase}/api/install-package`, {
+            const response = await fetch(`${this.apiBase}/api/packages/install`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ package_name: rawSpec })
@@ -6363,7 +8040,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/nodes/${folderName}/update`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -6396,7 +8074,8 @@ class MFConductor {
         
         try {
             await fetch(`${this.apiBase}/api/nodes/${this.selectedNode.folder_name}/open-folder`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
         } catch (error) {
             console.error('Error opening folder:', error);
@@ -6424,7 +8103,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/nodes/${folderName}/deactivate`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -6479,7 +8159,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/nodes/${folderName}/remove`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -6617,6 +8298,7 @@ class MFConductor {
                 message = 'Are you sure?',
                 type = 'info', // info, warning, danger, success
                 confirmText = 'OK',
+                altText = '',
                 cancelText = 'Cancel',
                 confirmClass = '' // optional: btn-danger, btn-warning, etc.
             } = options;
@@ -6626,6 +8308,7 @@ class MFConductor {
             const titleEl = document.getElementById('confirm-title');
             const messageEl = document.getElementById('confirm-message');
             const okBtn = document.getElementById('confirm-ok-btn');
+            const altBtn = document.getElementById('confirm-alt-btn');
             const cancelBtn = document.getElementById('confirm-cancel-btn');
             
             if (!modal) {
@@ -6636,9 +8319,14 @@ class MFConductor {
             
             // Set content
             titleEl.textContent = title;
+            messageEl.style.whiteSpace = 'pre-wrap';
             messageEl.textContent = message;
             okBtn.textContent = confirmText;
             cancelBtn.textContent = cancelText;
+            if (altBtn) {
+                altBtn.textContent = altText || 'Launch anyway';
+                altBtn.classList.toggle('hidden', !altText);
+            }
             
             // Set icon type
             iconEl.className = `confirm-icon ${type}`;
@@ -6661,7 +8349,12 @@ class MFConductor {
             // Handle clicks
             const handleOk = () => {
                 cleanup();
-                resolve(true);
+                resolve(altText ? 'confirm' : true);
+            };
+
+            const handleAlt = () => {
+                cleanup();
+                resolve('alt');
             };
             
             const handleCancel = () => {
@@ -6687,12 +8380,14 @@ class MFConductor {
                 modal.classList.remove('show');
                 okBtn.removeEventListener('click', handleOk);
                 cancelBtn.removeEventListener('click', handleCancel);
+                altBtn?.removeEventListener('click', handleAlt);
                 modal.removeEventListener('click', handleOverlay);
                 document.removeEventListener('keydown', handleKeydown);
             };
             
             okBtn.addEventListener('click', handleOk);
             cancelBtn.addEventListener('click', handleCancel);
+            altBtn?.addEventListener('click', handleAlt);
             modal.addEventListener('click', handleOverlay);
             document.addEventListener('keydown', handleKeydown);
             
@@ -6945,10 +8640,35 @@ class MFConductor {
     
     // Utility functions
     escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return String(text ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    escapeJs(text) {
+        return String(text ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/"/g, '&quot;')
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'")
+            .replace(/\r/g, '\\r')
+            .replace(/\n/g, '\\n');
+    }
+
+    escapeAttr(text) {
+        return this.escapeHtml(text);
+    }
+
+    safeAvatar(avatar) {
+        const a = String(avatar || 'default.svg');
+        if (a.includes('://') || a.includes('..') || a.startsWith('/') || a.startsWith('\\')) {
+            return 'default.svg';
+        }
+        return this.escapeAttr(a);
     }
     
     formatBytes(bytes) {
@@ -7120,7 +8840,8 @@ class MFConductor {
     async toggleFavorite(folderName) {
         try {
             const response = await fetch(`${this.apiBase}/api/nodes/${folderName}/toggle-favorite`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             const data = await response.json();
             
@@ -7409,7 +9130,7 @@ class MFConductor {
                 if (results.errors.length > 0) {
                     results.errors.forEach(err => this.log(err, 'warning'));
                 }
-                this.showToast('success', 'Profile applied. Restart ComfyUI for changes.');
+                this.showToast('success', 'Profile applied. Restart ComfyUI for node and package changes.');
                 await this.refreshNodes();
             } else {
                 this.showToast('error', data.message);
@@ -7791,15 +9512,22 @@ class MFConductor {
         
         this.log(`Deactivating ${folders.length} nodes...`, 'warning');
         
+        let deactivated = 0;
         for (const folder of folders) {
             try {
-                await fetch(`${this.apiBase}/api/nodes/${folder}/deactivate`, { method: 'POST' });
-            } catch (e) {}
+                const response = await fetch(`${this.apiBase}/api/nodes/${encodeURIComponent(folder)}/deactivate`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.message || 'Deactivation failed');
+                deactivated++;
+                this.selectedNodes.delete(folder);
+            } catch (e) {
+                this.log(`${folder}: ${e.message}`, 'error');
+            }
         }
         
-        this.selectedNodes.clear();
         await this.refreshNodes();
-        this.showToast('success', 'Nodes deactivated. Restart ComfyUI.');
+        this.showToast(deactivated === folders.length ? 'success' : 'warning',
+            `Deactivated ${deactivated}/${folders.length} nodes.${deactivated ? ' Restart ComfyUI.' : ''}${deactivated < folders.length ? ' See the log for failures.' : ''}`);
     }
     
     async bulkRemoveSelected() {
@@ -7830,15 +9558,19 @@ class MFConductor {
         let removed = 0;
         for (const folder of folders) {
             try {
-                const response = await fetch(`${this.apiBase}/api/nodes/${folder}/remove`, { method: 'POST' });
+                const response = await fetch(`${this.apiBase}/api/nodes/${encodeURIComponent(folder)}/remove`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
                 const data = await response.json();
-                if (data.success) removed++;
-            } catch (e) {}
+                if (!response.ok || !data.success) throw new Error(data.message || 'Removal failed');
+                removed++;
+                this.selectedNodes.delete(folder);
+            } catch (e) {
+                this.log(`${folder}: ${e.message}`, 'error');
+            }
         }
         
-        this.selectedNodes.clear();
         await this.refreshNodes();
-        this.showToast('success', `Removed ${removed} nodes`);
+        this.showToast(removed === folders.length ? 'success' : 'warning',
+            `Removed ${removed}/${folders.length} nodes.${removed < folders.length ? ' See the log for failures.' : ''}`);
     }
     
     // ==================== BROWSE NEW NODES ====================
@@ -8081,7 +9813,7 @@ class MFConductor {
                 <div class="browse-node-actions">
                     ${node.is_installed 
                         ? '<span class="browse-installed-badge">Installed</span>'
-                        : `<button class="btn btn-primary btn-sm" onclick="app.installBrowseNode('${this.escapeHtml(node.reference)}')">
+                        : `<button class="btn btn-primary btn-sm" onclick="app.installBrowseNode('${this.escapeJs(node.reference)}')">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
                                 <polyline points="7 10 12 15 17 10"/>
@@ -8882,7 +10614,8 @@ class MFConductor {
         
         try {
             const response = await fetch(`${this.apiBase}/api/usage/clear`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             
             const data = await response.json();
@@ -9564,7 +11297,7 @@ class MFConductor {
         const names = Object.keys(profiles).sort();
         
         select.innerHTML = '<option value="">-- Select or Create Profile --</option>' +
-            names.map(name => `<option value="${this.escapeHtml(name)}">${this.escapeHtml(name)}</option>`).join('');
+            names.map(name => `<option value="${this.escapeAttr(name)}">${this.escapeHtml(name)}</option>`).join('');
     }
     
     async loadProfileData(name) {
@@ -9694,7 +11427,7 @@ class MFConductor {
         
         container.innerHTML = available.map(n => `
             <div class="profile-node-item" data-folder="${this.escapeHtml(n.folder_name)}" 
-                 onclick="app.toggleNodeSelection(this)" ondblclick="app.addNodeToProfile('${this.escapeHtml(n.folder_name)}')">
+                 onclick="app.toggleNodeSelection(this)" ondblclick="app.addNodeToProfile('${this.escapeJs(n.folder_name)}')">
                 <span class="node-name" title="${this.escapeHtml(n.folder_name)}">${this.escapeHtml(n.display_name)}</span>
             </div>
         `).join('') || '<div class="empty-state" style="padding:20px;color:var(--text-muted);font-size:11px;">All nodes in profile</div>';
@@ -9723,7 +11456,7 @@ class MFConductor {
             const displayName = node?.display_name || folder;
             return `
                 <div class="profile-node-item" data-folder="${this.escapeHtml(folder)}" 
-                     onclick="app.toggleNodeSelection(this)" ondblclick="app.removeNodeFromProfile('${this.escapeHtml(folder)}')">
+                     onclick="app.toggleNodeSelection(this)" ondblclick="app.removeNodeFromProfile('${this.escapeJs(folder)}')">
                     <span class="node-name" title="${this.escapeHtml(folder)}">${this.escapeHtml(displayName)}</span>
                 </div>
             `;
@@ -9862,7 +11595,7 @@ class MFConductor {
             return `
                 <div class="package-item">
                     <input type="checkbox" ${!isExcluded ? 'checked' : ''} 
-                        onchange="app.togglePackage('${this.escapeHtml(pkg.name)}', this.checked)">
+                        onchange="app.togglePackage('${this.escapeJs(pkg.name)}', this.checked)">
                     <span class="package-name">${this.escapeHtml(pkg.name)}</span>
                     <span class="package-version">${this.escapeHtml(pkg.version || '')}</span>
                 </div>
@@ -9884,8 +11617,11 @@ class MFConductor {
         
         const enabled = Array.from(this.profileSelectedNodes);
         const disabled = this.nodes
-            .filter(n => !this.profileSelectedNodes.has(n.folder_name) && !this.requiredNodes.has(n.folder_name))
-            .map(n => n.folder_name);
+            .filter(n => {
+                const baseName = n.base_folder_name || n.folder_name;
+                return !this.profileSelectedNodes.has(baseName) && !this.requiredNodes.has(baseName);
+            })
+            .map(n => n.base_folder_name || n.folder_name);
         
         const flags = this.getSelectedFlags();
         const customFlagsList = this.profileCustomFlags;
@@ -9999,4 +11735,3 @@ class MFConductor {
 // Initialize the app and expose globally for inline handlers
 const app = new MFConductor();
 window.app = app;
-

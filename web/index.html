@@ -9,16 +9,14 @@
     <!-- Tailwind CSS (built locally via Tailwind CLI; see package.json) -->
     <link rel="stylesheet" href="tailwind.css?v=1.2.2">
     
-    <!-- Google Fonts: Inter -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Inter font (local) -->
+    <link rel="stylesheet" href="vendor/fonts/inter.css">
     
-    <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Font Awesome (local) -->
+    <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
     
     <!-- Custom styles / overrides -->
-    <link rel="stylesheet" href="style.css?v=1.2.2">
+    <link rel="stylesheet" href="style.css?v=1.4.5-ui2">
 </head>
 <body class="h-screen overflow-hidden flex bg-base text-slate-200 font-['Inter'] text-sm antialiased selection:bg-indigo-500 selection:text-white">
 
@@ -47,6 +45,11 @@
                     <i class="fa-solid fa-user w-5 text-center"></i>
                     <span>Profiles</span>
                 </a>
+                <a href="#" onclick="app.switchMainTab('workflows'); return false;" id="nav-workflows" 
+                   class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
+                    <i class="fa-solid fa-diagram-project w-5 text-center"></i>
+                    <span>Workflows</span>
+                </a>
                 <a href="#" onclick="app.switchMainTab('files'); return false;" id="nav-files" 
                    class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
                     <i class="fa-solid fa-folder-open w-5 text-center"></i>
@@ -69,10 +72,8 @@
                     <span>Terminal</span>
                 </a>
                 <a href="#" onclick="app.switchMainTab('community'); return false;" id="nav-community" 
-                   class="sidebar-link flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200">
-                    <i class="fa-solid fa-users w-5 text-center"></i>
+                   class="sidebar-link hidden">
                     <span>Community</span>
-                    <span class="ml-auto accent-badge text-[10px] font-bold px-2 py-0.5 rounded-full">SOON</span>
                 </a>
             </nav>
         </div>
@@ -89,7 +90,7 @@
                 </button>
             </div>
             <div class="mt-2 flex items-center justify-center gap-1 text-[10px] text-slate-600">
-                <span>v1.3.0</span>
+                    <span>v1.4.5</span>
                 <span>-</span>
                 <a href="https://friskcinema.com" target="_blank" class="hover:text-slate-400 transition-colors flex items-center gap-1">
                     <img src="mflogo.webp" alt="FriskCinema" class="h-3 w-3 rounded-sm opacity-50">
@@ -135,54 +136,15 @@
             <!-- Profiles Tab -->
             <div class="tab-content active" id="tab-profiles">
                 <!-- Profiles Toolbar -->
-                <div class="toolbar sticky top-0 z-10 bg-base/95 backdrop-blur border-b border-border-subtle p-4">
-                    <div class="flex flex-wrap items-center gap-3">
-                        <!-- Search -->
-                        <div class="relative flex-1 min-w-[200px] max-w-sm">
-                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm"></i>
-                            <input type="text" 
-                                   class="input-glass w-full pl-9 pr-4 py-2" 
-                                   id="profiles-search" 
-                                   placeholder="Search profiles..." 
-                                   autocomplete="off">
-                        </div>
-                        
-                        <!-- Sort -->
-                        <div class="flex items-center gap-2">
-                            <label class="text-xs text-slate-500">Sort:</label>
-                            <select class="select-glass" id="profiles-sort">
-                                <option value="name">Name</option>
-                                <option value="nodes">Node Count</option>
-                                <option value="default">Default First</option>
-                            </select>
-                            <button class="btn-icon-glass" id="profiles-sort-dir" title="Toggle sort direction">
-                                <i class="fa-solid fa-arrow-down-short-wide"></i>
-                            </button>
-                        </div>
-                        
-                        <!-- View Toggle -->
-                        <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
-                            <button class="btn-icon-glass view-btn active rounded-none border-0" id="profiles-view-grid" title="Grid View">
-                                <i class="fa-solid fa-th"></i>
-                            </button>
-                            <button class="btn-icon-glass view-btn rounded-none border-0" id="profiles-view-list" title="List View">
-                                <i class="fa-solid fa-list"></i>
-                            </button>
-                        </div>
-                        
-                        <!-- Actions -->
-                        <div class="flex items-center gap-2 ml-auto">
-                            <button class="btn-glass" id="import-profile-btn" title="Import Profile">
-                                <i class="fa-solid fa-download"></i>
-                                <span>Import</span>
-                            </button>
-                            <button class="btn-glass btn-success" id="create-profile-btn" title="Create New Profile">
-                                <i class="fa-solid fa-plus"></i>
-                                <span>New Profile</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <div class="collection-toolbar" data-collection="profiles">
+      <div class="collection-toolbar-row">
+        <div class="collection-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input class="input-glass" id="profiles-search" type="search" placeholder="Search profiles..." aria-label="Search profiles" autocomplete="off"></div>
+        <div class="collection-sort"><label for="profiles-sort">Sort</label><select class="select-glass" id="profiles-sort"><option value="name">Name</option><option value="nodes">Node count</option><option value="default">Default first</option></select><button class="btn-icon-glass" id="profiles-sort-dir" title="Ascending" aria-label="Sort ascending"><i class="fa-solid fa-arrow-down-short-wide"></i></button></div>
+        <div class="collection-views" role="group" aria-label="Profiles view"><button id="profiles-view-grid" class="btn-glass" title="Grid" data-view="grid" aria-pressed="false"><i class="fa-solid fa-table-cells" aria-hidden="true"></i><span>Grid</span></button><button id="profiles-view-list" class="btn-glass" title="List" data-view="list" aria-pressed="false"><i class="fa-solid fa-list" aria-hidden="true"></i><span>List</span></button></div>
+        <div class="collection-actions"><button id="profiles-refresh-btn" class="btn-glass" title="Refresh" ><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>Refresh</span></button><button id="import-profile-btn" class="btn-glass" title="Import" ><i class="fa-solid fa-download" aria-hidden="true"></i><span>Import</span></button><button id="create-profile-btn" class="btn-primary-glass" title="New profile" ><i class="fa-solid fa-plus" aria-hidden="true"></i><span>New profile</span></button></div>
+      </div>
+      <div class="collection-filters"><span class="collection-count"></span></div>
+    </div>
                 
                 <!-- Profiles Count -->
                 <div class="px-6 pt-4 pb-2 flex items-center justify-between">
@@ -197,86 +159,94 @@
                 </div>
             </div>
 
-            <!-- Files Tab -->
-            <div class="tab-content hidden" id="tab-files">
-                <!-- Files Toolbar -->
-                <div class="toolbar sticky top-0 z-10 bg-base/95 backdrop-blur border-b border-border-subtle p-4">
-                    <div class="flex flex-wrap items-center gap-3">
-                        <!-- Folder Selector -->
-                        <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
-                            <button class="btn-icon-glass folder-btn active rounded-none border-0" id="files-folder-output" data-folder="output" title="Output Folder">
-                                <img src="assets/out.svg" alt="Output" class="folder-icon">
+            <!-- Workflows Tab -->
+            <div class="tab-content hidden workflows-tab" id="tab-workflows">
+                <div class="collection-toolbar" data-collection="workflows">
+      <div class="collection-toolbar-row">
+        <div class="collection-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input class="input-glass" id="workflows-search" type="search" placeholder="Search workflows..." aria-label="Search workflows" autocomplete="off"></div>
+        <div class="collection-sort"><label for="workflows-sort">Sort</label><select class="select-glass" id="workflows-sort"><option value="name">Name</option><option value="date">Modified</option><option value="nodes">Custom nodes</option></select><button class="btn-icon-glass" id="workflows-sort-dir" title="Ascending" aria-label="Sort ascending"><i class="fa-solid fa-arrow-down-short-wide"></i></button></div>
+        <div class="collection-views" role="group" aria-label="Workflows view"><button id="workflows-view-grid" class="btn-glass" title="Grid" data-view="grid" aria-pressed="false"><i class="fa-solid fa-table-cells" aria-hidden="true"></i><span>Grid</span></button><button id="workflows-view-list" class="btn-glass" title="List" data-view="list" aria-pressed="false"><i class="fa-solid fa-list" aria-hidden="true"></i><span>List</span></button><button id="workflows-view-tree" class="btn-glass" title="Folders" data-view="tree" aria-pressed="false"><i class="fa-solid fa-folder-tree" aria-hidden="true"></i><span>Folders</span></button></div>
+        <div class="collection-actions"><button id="workflows-refresh-btn" class="btn-glass" title="Refresh" ><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>Refresh</span></button></div>
+      </div>
+      <div class="collection-filters"><div id="workflows-tree-actions"><button id="workflows-expand-all" class="btn-glass" title="Expand folders" ><i class="fa-solid fa-folder-plus" aria-hidden="true"></i><span>Expand folders</span></button><button id="workflows-collapse-all" class="btn-glass" title="Collapse folders" ><i class="fa-solid fa-folder-minus" aria-hidden="true"></i><span>Collapse folders</span></button></div><span class="collection-count"></span></div>
+    </div>
+                <div class="workflows-split">
+                    <div class="workflows-tree-pane">
+                        <div class="flex items-center justify-between px-1 pb-2">
+                            <span class="text-xs text-slate-500" id="workflows-count">0 workflows</span>
+                            <span class="text-[11px] text-slate-600" id="workflows-root-hint">user/default/workflows</span>
+                        </div>
+                        <div class="workflows-selection-bar is-empty" id="workflows-selection-bar">
+                            <span class="workflows-selected-count" id="workflows-selected-count">None selected</span>
+                            <button class="btn-glass btn-sm" id="workflows-select-visible" title="Check every workflow currently visible">
+                                <span>Select visible</span>
                             </button>
-                            <button class="btn-icon-glass folder-btn rounded-none border-0" id="files-folder-input" data-folder="input" title="Input Folder">
-                                <img src="assets/in.svg" alt="Input" class="folder-icon">
+                            <button class="btn-glass btn-sm" id="workflows-deselect" title="Clear checked workflows (Esc)" disabled>
+                                <span>Deselect</span>
                             </button>
-                            <button class="btn-icon-glass folder-btn rounded-none border-0" id="files-folder-both" data-folder="both" title="Both Folders">
-                                <img src="assets/inout.svg" alt="Both" class="folder-icon">
+                            <button class="btn-primary-glass btn-sm hidden" id="workflows-launch-selected" title="Launch the checked workflows together">
+                                <i class="fa-solid fa-play"></i>
+                                <span>Launch selected</span>
                             </button>
                         </div>
-                        
-                        <!-- Search -->
-                        <div class="relative flex-1 min-w-[200px] max-w-md">
-                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
-                            <input type="text" class="input-glass w-full pl-10 pr-4" id="files-search" placeholder="Search files..." autocomplete="off">
-                        </div>
-                        
-                        <!-- Sort -->
-                        <div class="flex items-center gap-2">
-                            <label class="text-xs text-slate-500">Sort:</label>
-                            <select class="select-glass" id="files-sort">
-                                <option value="date">Date Modified</option>
-                                <option value="name">Name</option>
-                                <option value="size">Size</option>
-                                <option value="type">Type</option>
-                                <option value="workflow">Workflow</option>
-                            </select>
-                            <button class="btn-icon-glass" id="files-sort-dir" title="Toggle sort direction">
-                                <i class="fa-solid fa-arrow-down-short-wide"></i>
+                        <div class="profiles-grid" id="workflows-grid"></div>
+                    </div>
+                    <div class="workflows-info-pane">
+                        <div class="workflow-info-header">
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-semibold text-white truncate" id="workflow-info-title">Select a workflow</h2>
+                                <p class="text-[11px] text-slate-500 truncate" id="workflow-info-path"></p>
+                            </div>
+                            <button class="btn-primary-glass btn-sm hidden" id="workflow-info-launch-btn">
+                                <i class="fa-solid fa-play"></i>
+                                <span>Launch</span>
                             </button>
                         </div>
-                        
-                        <!-- Filter by Type -->
-                        <div class="flex items-center gap-2">
-                            <label class="text-xs text-slate-500">Type:</label>
-                            <select class="select-glass" id="files-type-filter">
-                                <option value="">All</option>
-                                <option value="image">Images</option>
-                                <option value="video">Videos</option>
-                                <option value="audio">Audio</option>
-                                <option value="other">Other</option>
-                            </select>
-                        </div>
-                        
-                        <!-- View Toggle -->
-                        <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
-                            <button class="btn-icon-glass view-btn active rounded-none border-0" id="files-view-grid" title="Grid View">
-                                <i class="fa-solid fa-th"></i>
-                            </button>
-                            <button class="btn-icon-glass view-btn rounded-none border-0" id="files-view-list" title="List View">
-                                <i class="fa-solid fa-list"></i>
-                            </button>
-                            <button class="btn-icon-glass view-btn rounded-none border-0" id="files-view-workflow" title="Group by Workflow">
-                                <i class="fa-solid fa-sitemap"></i>
-                            </button>
-                        </div>
-                        
-                        <!-- Subfolder View Toggle -->
-                        <button class="btn-icon-glass" id="files-recursive-btn" title="Show All Files (include subfolders)">
-                            <i class="fa-solid fa-folder-tree"></i>
-                        </button>
-                        
-                        <!-- Actions -->
-                        <div class="flex items-center gap-2 ml-auto">
-                            <button class="btn-icon-glass" id="files-refresh-btn" title="Refresh">
-                                <i class="fa-solid fa-rotate"></i>
-                            </button>
-                            <button class="btn-icon-glass" id="files-open-folder-btn" title="Open in Explorer">
-                                <i class="fa-solid fa-folder-open"></i>
-                            </button>
+                        <div class="workflow-info-stack">
+<section class="workflow-info-panel workflow-launch-panel" id="workflow-launch-options">
+    <h3>Launch setup</h3>
+    <label for="workflow-launch-profile">Start with profile</label>
+    <select id="workflow-launch-profile" class="select-glass"><option value="">No profile</option></select>
+    <label for="workflow-launch-flags">Launch flags</label>
+    <textarea id="workflow-launch-flags" class="input-glass" rows="3" spellcheck="false" placeholder="--lowvram --preview-method auto" aria-describedby="workflow-flags-help"></textarea>
+    <p id="workflow-flags-help" class="workflow-info-empty">Edit the complete flags for this launch. Quote paths containing spaces. Saved profiles are unchanged.</p>
+    <div class="workflow-flag-presets" role="group" aria-label="Quick launch flags">
+      <button class="btn-glass btn-sm" data-launch-preset="--lowvram">Low VRAM</button>
+      <button class="btn-glass btn-sm" data-launch-preset="--cpu">CPU</button>
+      <button class="btn-glass btn-sm" data-launch-preset="--preview-method auto">Previews</button>
+    </div>
+    <h4>Keep useful tools enabled</h4>
+    <div class="workflow-chip-list" id="workflow-keep-enabled">Loading installed tools...</div>
+    <label for="workflow-extra-nodes">Additional nodes to keep</label>
+    <select id="workflow-extra-nodes" class="select-glass" multiple size="4" aria-describedby="workflow-extra-help"></select>
+    <p id="workflow-extra-help" class="workflow-info-empty">Workflow dependencies and the tools above stay enabled. Select other packs only when needed; they may increase startup time. Use Ctrl/Cmd to select multiple.</p>
+    <p id="workflow-launch-status" role="status" class="workflow-info-empty"></p>
+</section>
+                            <section class="workflow-info-panel" id="workflow-info-nodes">
+                                <h3>Nodes &amp; packages</h3>
+                                <p class="workflow-info-empty">Select a workflow to see its nodes and packages.</p>
+                            </section>
+                            <section class="workflow-info-panel" id="workflow-info-meta">
+                                <h3>Info</h3>
+                                <p class="workflow-info-empty">Path, size, and launch isolation details appear here.</p>
+                            </section>
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Files Tab -->
+            <div class="tab-content hidden" id="tab-files">
+                <!-- Files Toolbar -->
+                <div class="collection-toolbar" data-collection="files">
+      <div class="collection-toolbar-row">
+        <div class="collection-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input class="input-glass" id="files-search" type="search" placeholder="Search files..." aria-label="Search files" autocomplete="off"></div>
+        <div class="collection-sort"><label for="files-sort">Sort</label><select class="select-glass" id="files-sort"><option value="date">Modified</option><option value="name">Name</option><option value="size">Size</option><option value="type">Type</option><option value="workflow">Workflow</option></select><button class="btn-icon-glass" id="files-sort-dir" title="Ascending" aria-label="Sort ascending"><i class="fa-solid fa-arrow-down-short-wide"></i></button></div>
+        <div class="collection-views" role="group" aria-label="Files view"><button id="files-view-grid" class="btn-glass" title="Grid" data-view="grid" aria-pressed="false"><i class="fa-solid fa-table-cells" aria-hidden="true"></i><span>Grid</span></button><button id="files-view-list" class="btn-glass" title="List" data-view="list" aria-pressed="false"><i class="fa-solid fa-list" aria-hidden="true"></i><span>List</span></button><button id="files-view-workflow" class="btn-glass" title="By workflow" data-view="workflow" aria-pressed="false"><i class="fa-solid fa-sitemap" aria-hidden="true"></i><span>By workflow</span></button></div>
+        <div class="collection-actions"><button id="files-refresh-btn" class="btn-glass" title="Refresh" ><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>Refresh</span></button><button id="files-open-folder-btn" class="btn-glass" title="Open folder" ><i class="fa-solid fa-folder-open" aria-hidden="true"></i><span>Open folder</span></button></div>
+      </div>
+      <div class="collection-filters"><div class="collection-views"><button id="files-folder-output" class="btn-glass folder-btn active" title="Output" data-folder="output"><i class="fa-solid fa-folder" aria-hidden="true"></i><span>Output</span></button><button id="files-folder-input" class="btn-glass folder-btn" title="Input" data-folder="input"><i class="fa-solid fa-folder" aria-hidden="true"></i><span>Input</span></button><button id="files-folder-both" class="btn-glass folder-btn" title="Both" data-folder="both"><i class="fa-solid fa-folder" aria-hidden="true"></i><span>Both</span></button></div><label for="files-type-filter">Type</label><select class="select-glass" id="files-type-filter"><option value="">All types</option><option value="image">Images</option><option value="video">Videos</option><option value="audio">Audio</option><option value="other">Other</option></select><button id="files-recursive-btn" class="btn-glass" title="Include subfolders" ><i class="fa-solid fa-folder-tree" aria-hidden="true"></i><span>Include subfolders</span></button><span class="collection-count"></span></div>
+    </div>
                 
                 <!-- Files Breadcrumb -->
                 <div class="px-6 pt-4 pb-2 flex items-center justify-between">
@@ -304,86 +274,15 @@
             <!-- Nodes Tab -->
             <div class="tab-content hidden" id="tab-nodes">
                 <!-- Toolbar -->
-                <div class="toolbar sticky top-0 z-10 bg-base/95 backdrop-blur border-b border-border-subtle p-4">
-                    <div class="flex flex-wrap items-center gap-3">
-                        <!-- Search -->
-                        <div class="relative flex-1 min-w-[200px] max-w-md">
-                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
-                            <input type="text" class="input-glass w-full pl-10 pr-4" id="search-input" placeholder="Search custom nodes..." autocomplete="off">
-                            <span class="search-hint absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">/</span>
-                        </div>
-                        
-                        <!-- Sort -->
-                        <div class="flex items-center gap-2">
-                            <label class="text-xs text-slate-500">Sort:</label>
-                            <select class="select-glass" id="sort-select">
-                                <option value="name">Name</option>
-                                <option value="date_added">Date Added</option>
-                                <option value="last_updated">Last Updated</option>
-                                <option value="author">Author</option>
-                                <option value="stars">GitHub Stars</option>
-                            </select>
-                            <button class="btn-icon-glass" id="sort-direction" title="Toggle sort direction">
-                                <i class="fa-solid fa-arrow-down-short-wide"></i>
-                            </button>
-                        </div>
-                        
-                        <!-- Filters -->
-                        <div class="flex items-center gap-2">
-                            <button class="btn-icon-glass" id="filter-favorites" title="Show Favorites Only">
-                                <i class="fa-regular fa-star"></i>
-                            </button>
-                            <select class="select-glass" id="filter-tag">
-                                <option value="">All Tags</option>
-                            </select>
-                        </div>
-                        
-                        <div class="batch-tag-btns hidden flex items-center gap-2" id="batch-tag-btns">
-                            <button class="btn-glass btn-sm" id="batch-add-tag" title="Add tag to selected nodes">
-                                <i class="fa-solid fa-tag"></i>
-                                Add Tag
-                            </button>
-                            <button class="btn-glass btn-sm" id="batch-remove-tag" title="Remove tag from selected nodes">
-                                <i class="fa-solid fa-tag"></i>
-                                Remove Tag
-                            </button>
-                        </div>
-                        
-                        <!-- Actions -->
-                        <div class="flex items-center gap-2 ml-auto">
-                            <button class="btn-icon-glass" id="refresh-btn" title="Refresh Node List (R)">
-                                <i class="fa-solid fa-rotate"></i>
-                            </button>
-                            <button class="btn-icon-glass" id="check-updates-btn" title="Check for Updates (U)">
-                                <i class="fa-solid fa-clock-rotate-left"></i>
-                            </button>
-                            <button class="btn-glass" id="browse-btn" title="Browse Available Nodes (B)">
-                                <i class="fa-solid fa-compass"></i>
-                                Browse
-                            </button>
-                            <button class="btn-primary-glass" id="install-btn" title="Install from URL (N)">
-                                <i class="fa-solid fa-download"></i>
-                                Install
-                            </button>
-                        </div>
-                        
-                        <!-- View Toggle -->
-                        <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
-                            <button class="btn-icon-glass view-btn active rounded-none border-0" id="view-grid" title="Grid View">
-                                <i class="fa-solid fa-th"></i>
-                            </button>
-                            <button class="btn-icon-glass view-btn rounded-none border-0" id="view-list" title="List View">
-                                <i class="fa-solid fa-list"></i>
-                            </button>
-                        </div>
-                        
-                        <!-- Stats -->
-                        <div class="flex items-center gap-3 text-xs text-slate-500 pl-3">
-                            <span><span class="text-white font-medium" id="total-nodes">0</span> Total</span>
-                            <span><span class="text-white font-medium" id="shown-nodes">0</span> Shown</span>
-                        </div>
-                    </div>
-                </div>
+                <div class="collection-toolbar" data-collection="nodes">
+      <div class="collection-toolbar-row">
+        <div class="collection-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input class="input-glass" id="search-input" type="search" placeholder="Search nodes..." aria-label="Search nodes" autocomplete="off"></div>
+        <div class="collection-sort"><label for="sort-select">Sort</label><select class="select-glass" id="sort-select"><option value="name">Name</option><option value="date_added">Added</option><option value="last_updated">Updated</option><option value="author">Author</option><option value="stars">Stars</option></select><button class="btn-icon-glass" id="sort-direction" title="Ascending" aria-label="Sort ascending"><i class="fa-solid fa-arrow-down-short-wide"></i></button></div>
+        <div class="collection-views" role="group" aria-label="Nodes view"><button id="view-grid" class="btn-glass" title="Grid" data-view="grid" aria-pressed="false"><i class="fa-solid fa-table-cells" aria-hidden="true"></i><span>Grid</span></button><button id="view-list" class="btn-glass" title="List" data-view="list" aria-pressed="false"><i class="fa-solid fa-list" aria-hidden="true"></i><span>List</span></button></div>
+        <div class="collection-actions"><button id="refresh-btn" class="btn-glass" title="Refresh" ><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>Refresh</span></button><button id="check-updates-btn" class="btn-glass" title="Check updates" ><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span>Check updates</span></button><button id="browse-btn" class="btn-glass" title="Browse" ><i class="fa-solid fa-compass" aria-hidden="true"></i><span>Browse</span></button><button id="install-btn" class="btn-primary-glass" title="Install" ><i class="fa-solid fa-download" aria-hidden="true"></i><span>Install</span></button></div>
+      </div>
+      <div class="collection-filters"><button id="filter-favorites" class="btn-glass" title="Favorites" ><i class="fa-solid fa-star" aria-hidden="true"></i><span>Favorites</span></button><label for="filter-tag">Tag</label><select class="select-glass" id="filter-tag"><option value="">All tags</option></select><div class="batch-tag-btns hidden" id="batch-tag-btns"><button id="batch-add-tag" class="btn-glass" title="Add tag" ><i class="fa-solid fa-tag" aria-hidden="true"></i><span>Add tag</span></button><button id="batch-remove-tag" class="btn-glass" title="Remove tag" ><i class="fa-solid fa-tag" aria-hidden="true"></i><span>Remove tag</span></button></div><span class="collection-count"><span id="shown-nodes">0</span> shown / <span id="total-nodes">0</span> total</span></div>
+    </div>
 
                 <!-- Node List -->
                 <div class="node-list-container p-4">
@@ -408,49 +307,15 @@
             <!-- Packages Tab -->
             <div class="tab-content hidden" id="tab-packages">
                 <div class="packages-tab-content">
-                    <div class="packages-toolbar sticky top-0 z-10 bg-base/95 backdrop-blur border-b border-border-subtle p-4">
-                        <div class="flex flex-wrap items-center gap-3">
-                            <div class="relative flex-1 min-w-[200px] max-w-md">
-                                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
-                                <input type="text" class="input-glass w-full pl-10" id="packages-tab-search" placeholder="Search packages..." autocomplete="off">
-                            </div>
-                            <button class="btn-primary-glass" id="packages-install-btn" title="Install New Package">
-                                <i class="fa-solid fa-plus"></i>
-                                Install
-                            </button>
-                            <button class="btn-glass" id="packages-check-updates-btn" title="Check for Updates">
-                                <i class="fa-solid fa-clock-rotate-left"></i>
-                                Check Updates
-                            </button>
-                            <button class="btn-glass btn-success hidden" id="packages-upgrade-all-btn" title="Upgrade All Outdated">
-                                <i class="fa-solid fa-arrow-up"></i>
-                                Upgrade All
-                            </button>
-                            <div class="flex items-center gap-2">
-                                <select id="packages-sort" class="select-glass">
-                                    <option value="name">Sort: Name</option>
-                                    <option value="version">Sort: Version</option>
-                                    <option value="size">Sort: Size</option>
-                                </select>
-                                <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
-                                    <input type="checkbox" id="packages-show-outdated" class="accent-indigo-500">
-                                    <span>Outdated only</span>
-                                </label>
-                            </div>
-                            <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
-                                <button class="btn-icon-glass rounded-none border-0" id="packages-view-grid" title="Grid view">
-                                    <i class="fa-solid fa-th"></i>
-                                </button>
-                                <button class="btn-icon-glass rounded-none border-0 active" id="packages-view-list" title="List view">
-                                    <i class="fa-solid fa-list"></i>
-                                </button>
-                            </div>
-                            <button class="btn-icon-glass" id="packages-refresh-btn" title="Refresh List">
-                                <i class="fa-solid fa-rotate"></i>
-                            </button>
-                            <span class="text-xs text-slate-500" id="packages-tab-stats">Loading...</span>
-                        </div>
-                    </div>
+                    <div class="collection-toolbar" data-collection="packages">
+      <div class="collection-toolbar-row">
+        <div class="collection-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input class="input-glass" id="packages-tab-search" type="search" placeholder="Search packages..." aria-label="Search packages" autocomplete="off"></div>
+        <div class="collection-sort"><label for="packages-sort">Sort</label><select class="select-glass" id="packages-sort"><option value="name">Name</option><option value="version">Version</option><option value="updated">Update available</option></select><button class="btn-icon-glass" id="packages-sort-dir" title="Ascending" aria-label="Sort ascending"><i class="fa-solid fa-arrow-down-short-wide"></i></button></div>
+        <div class="collection-views" role="group" aria-label="Packages view"><button id="packages-view-grid" class="btn-glass" title="Grid" data-view="grid" aria-pressed="false"><i class="fa-solid fa-table-cells" aria-hidden="true"></i><span>Grid</span></button><button id="packages-view-list" class="btn-glass" title="List" data-view="list" aria-pressed="false"><i class="fa-solid fa-list" aria-hidden="true"></i><span>List</span></button></div>
+        <div class="collection-actions"><button id="packages-refresh-btn" class="btn-glass" title="Refresh" ><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>Refresh</span></button><button id="packages-check-updates-btn" class="btn-glass" title="Check updates" ><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span>Check updates</span></button><button id="packages-upgrade-all-btn" class="btn-glass" title="Upgrade all" hidden><i class="fa-solid fa-arrow-up" aria-hidden="true"></i><span>Upgrade all</span></button><button id="packages-install-btn" class="btn-primary-glass" title="Install" ><i class="fa-solid fa-plus" aria-hidden="true"></i><span>Install</span></button></div>
+      </div>
+      <div class="collection-filters"><label><input type="checkbox" id="packages-show-outdated"> Outdated only</label><span class="collection-count"><span id="packages-tab-stats">Loading...</span></span></div>
+    </div>
                     <div class="packages-tab-list p-4" id="packages-tab-list">
                         <div class="loading-state flex flex-col items-center justify-center py-20">
                             <div class="loader mb-4"></div>
@@ -563,14 +428,15 @@
 
     <!-- Custom Confirm Modal -->
     <div class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm" id="confirm-modal">
-        <div class="modal-content glass-panel w-full max-w-sm p-6 rounded-xl text-center">
+        <div class="modal-content glass-panel w-full max-w-md p-6 rounded-xl text-center">
             <div class="confirm-icon w-14 h-14 mx-auto mb-4 rounded-full flex items-center justify-center bg-amber-400/15 text-amber-400" id="confirm-icon">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             </div>
             <div class="text-lg font-semibold text-white mb-2" id="confirm-title">Confirm Action</div>
             <div class="text-slate-400 mb-6" id="confirm-message">Are you sure?</div>
-            <div class="flex items-center justify-center gap-3">
+            <div class="flex items-center justify-center gap-3 flex-wrap">
                 <button class="btn-glass" id="confirm-cancel-btn">Cancel</button>
+                <button class="btn-glass hidden" id="confirm-alt-btn">Launch anyway</button>
                 <button class="btn-primary-glass" id="confirm-ok-btn">OK</button>
             </div>
         </div>
@@ -590,15 +456,15 @@
     </div>
 
     <!-- Profile Editor -->
-    <div class="profile-editor-overlay fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center" id="profile-editor">
-        <div class="profile-editor glass-panel w-full max-w-4xl max-h-[85vh] mx-4 rounded-xl flex flex-col overflow-hidden">
+    <div class="profile-editor-overlay fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center p-6" id="profile-editor">
+        <div class="profile-editor glass-panel w-full max-w-5xl h-full rounded-xl flex flex-col overflow-hidden">
             <div class="profile-editor-header flex items-center justify-between px-4 py-3 border-b border-border-subtle">
                 <h2 class="text-base font-semibold text-white" id="profile-editor-title">Create Profile</h2>
                 <button class="btn-icon-glass w-8 h-8" onclick="app.closeProfileEditor()">
                     <i class="fa-solid fa-xmark text-sm"></i>
                 </button>
             </div>
-            <div class="profile-editor-body flex-1 overflow-y-auto p-4">
+            <div class="profile-editor-body flex-1 overflow-hidden p-4 flex flex-col min-h-0">
                 <!-- Profile Info Section -->
                 <div class="profile-editor-section mb-4">
                     <h3 class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Profile Info</h3>
@@ -630,7 +496,7 @@
 
                 <!-- Nodes Tab -->
                 <div class="profile-editor-tab-content active" id="pe-tab-nodes">
-                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-3 h-[280px]">
+                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-3 h-full">
                         <div class="nodes-panel-left flex flex-col bg-card/50 rounded-lg border border-border-subtle overflow-hidden">
                             <div class="panel-header flex items-center justify-between p-3 border-b border-border-subtle">
                                 <span class="text-sm font-medium text-slate-300">Excluded Nodes</span>
@@ -669,8 +535,8 @@
                 </div>
 
                 <!-- Packages Tab -->
-                <div class="profile-editor-tab-content hidden" id="pe-tab-packages">
-                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-3 h-[280px]">
+                <div class="profile-editor-tab-content" id="pe-tab-packages">
+                    <div class="profile-nodes-panel grid grid-cols-[1fr_auto_1fr] gap-3 h-full">
                         <div class="nodes-panel-left flex flex-col bg-card/50 rounded-lg border border-border-subtle overflow-hidden">
                             <div class="panel-header flex items-center justify-between p-3 border-b border-border-subtle">
                                 <span class="text-sm font-medium text-slate-300">Excluded Packages</span>
@@ -709,94 +575,18 @@
                 </div>
 
                 <!-- Flags Tab -->
-                <div class="profile-editor-tab-content hidden" id="pe-tab-flags">
-                    <div class="flags-grid grid grid-cols-2 lg:grid-cols-3 gap-3 max-h-[280px] overflow-y-auto" id="pe-flags-grid">
-                        <!-- VRAM Management -->
-                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
-                            <div class="text-sm font-medium text-white mb-3">VRAM Management</div>
-                            <div class="space-y-2 text-xs">
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="" checked class="accent-indigo-500"> Default</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--gpu-only" class="accent-indigo-500"> --gpu-only</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--highvram" class="accent-indigo-500"> --highvram</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--normalvram" class="accent-indigo-500"> --normalvram</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--lowvram" class="accent-indigo-500"> --lowvram</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--novram" class="accent-indigo-500"> --novram</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vram" value="--cpu" class="accent-indigo-500"> --cpu</label>
+                <div class="profile-editor-tab-content" id="pe-tab-flags">
+                    <div class="flags-container flex flex-col h-full">
+                        <!-- Tag-style flag input -->
+                        <div class="flags-tag-input-wrapper">
+                            <div class="flags-tag-input" id="pe-flags-tag-input">
+                                <div class="flags-tags" id="pe-flags-tags"></div>
+                                <input type="text" id="pe-flags-input" placeholder="Type to add flags..." autocomplete="off" spellcheck="false">
                             </div>
+                            <div id="pe-flags-dropdown" class="flags-dropdown hidden"></div>
                         </div>
-
-                        <!-- Attention -->
-                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
-                            <div class="text-sm font-medium text-white mb-3">Attention</div>
-                            <div class="space-y-2 text-xs">
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="" checked class="accent-indigo-500"> Default</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-pytorch-cross-attention" class="accent-indigo-500"> pytorch-cross</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-sage-attention" class="accent-indigo-500"> sage-attention</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-flash-attention" class="accent-indigo-500"> flash-attention</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-split-cross-attention" class="accent-indigo-500"> split-cross</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-attention" value="--use-quad-cross-attention" class="accent-indigo-500"> quad-cross</label>
-                            </div>
-                        </div>
-
-                        <!-- Precision -->
-                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
-                            <div class="text-sm font-medium text-white mb-3">Precision</div>
-                            <div class="space-y-2 text-xs">
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="" checked class="accent-indigo-500"> Default</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="--force-fp16" class="accent-indigo-500"> --force-fp16</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="--force-fp32" class="accent-indigo-500"> --force-fp32</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="--bf16-unet" class="accent-indigo-500"> --bf16-unet</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-precision" value="--fp8_e4m3fn-unet" class="accent-indigo-500"> --fp8-unet</label>
-                            </div>
-                        </div>
-
-                        <!-- VAE -->
-                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
-                            <div class="text-sm font-medium text-white mb-3">VAE</div>
-                            <div class="space-y-2 text-xs">
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vae" value="" checked class="accent-indigo-500"> Default</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vae" value="--fp16-vae" class="accent-indigo-500"> --fp16-vae</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vae" value="--fp32-vae" class="accent-indigo-500"> --fp32-vae</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-vae" value="--bf16-vae" class="accent-indigo-500"> --bf16-vae</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-cpu-vae" value="--cpu-vae" class="accent-indigo-500"> --cpu-vae</label>
-                            </div>
-                        </div>
-
-                        <!-- Cache -->
-                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
-                            <div class="text-sm font-medium text-white mb-3">Cache</div>
-                            <div class="space-y-2 text-xs">
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-cache" value="" checked class="accent-indigo-500"> Default</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-cache" value="--cache-classic" class="accent-indigo-500"> --cache-classic</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-cache" value="--cache-lru 10" class="accent-indigo-500"> --cache-lru</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="radio" name="pe-cache" value="--cache-none" class="accent-indigo-500"> --cache-none</label>
-                            </div>
-                        </div>
-
-                        <!-- Other -->
-                        <div class="flag-group bg-card/50 rounded-lg p-4 border border-border-subtle">
-                            <div class="text-sm font-medium text-white mb-3">Other</div>
-                            <div class="space-y-2 text-xs">
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-disable-xformers" value="--disable-xformers" class="accent-indigo-500"> disable-xformers</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-force-upcast" value="--force-upcast-attention" class="accent-indigo-500"> force-upcast</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-disable-smart-memory" value="--disable-smart-memory" class="accent-indigo-500"> disable-smart-mem</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-deterministic" value="--deterministic" class="accent-indigo-500"> deterministic</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-fast" value="--fast" class="accent-indigo-500"> --fast</label>
-                                <label class="flag-option flex items-center gap-2 cursor-pointer"><input type="checkbox" name="pe-preview-method" value="--preview-method taesd" class="accent-indigo-500"> preview-taesd</label>
-                            </div>
-                        </div>
-
-                        <!-- Custom Flags -->
-                        <div class="flag-group flag-group-custom bg-card/50 rounded-lg p-4 border border-border-subtle col-span-2 lg:col-span-3">
-                            <div class="text-sm font-medium text-white mb-3">Custom Flags</div>
-                            <div class="custom-flags-list flex flex-wrap gap-2 mb-3" id="pe-custom-flags-list"></div>
-                            <div class="flex items-center gap-2">
-                                <input type="text" id="pe-custom-flag-input" class="input-glass flex-1 text-xs" placeholder="e.g. --reserve-vram 2">
-                                <button class="btn-primary-glass btn-sm" id="pe-add-custom-flag" title="Add">
-                                    <i class="fa-solid fa-plus"></i>
-                                </button>
-                            </div>
-                        </div>
+                        <!-- Accordion container -->
+                        <div class="flags-accordion flex-1 overflow-y-auto space-y-2" id="pe-flags-accordion"></div>
                     </div>
                 </div>
             </div>
@@ -861,35 +651,15 @@
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="browse-toolbar p-4 border-b border-border-subtle flex flex-wrap items-center gap-3">
-                <div class="relative flex-1 min-w-[200px] max-w-sm">
-                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
-                    <input type="text" id="browse-search" class="input-glass w-full pl-10" placeholder="Search nodes...">
-                </div>
-                <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
-                    <input type="checkbox" id="browse-hide-installed" class="accent-indigo-500">
-                    Hide installed
-                </label>
-                <select id="browse-sort" class="select-glass">
-                    <option value="stars">Stars</option>
-                    <option value="name">Name</option>
-                    <option value="author">Author</option>
-                </select>
-                <button class="btn-icon-glass" id="browse-sort-dir" title="Toggle sort direction">
-                    <i class="fa-solid fa-arrow-up-short-wide"></i>
-                </button>
-                <div class="flex items-center border border-border-subtle rounded-lg overflow-hidden">
-                    <button class="btn-icon-glass active rounded-none border-0" id="browse-view-grid" title="Grid view">
-                        <i class="fa-solid fa-th"></i>
-                    </button>
-                    <button class="btn-icon-glass rounded-none border-0" id="browse-view-list" title="List view">
-                        <i class="fa-solid fa-list"></i>
-                    </button>
-                </div>
-                <button class="btn-icon-glass" id="browse-refresh" title="Refresh list">
-                    <i class="fa-solid fa-rotate"></i>
-                </button>
-            </div>
+            <div class="collection-toolbar" data-collection="browse">
+      <div class="collection-toolbar-row">
+        <div class="collection-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input class="input-glass" id="browse-search" type="search" placeholder="Search browse..." aria-label="Search browse" autocomplete="off"></div>
+        <div class="collection-sort"><label for="browse-sort">Sort</label><select class="select-glass" id="browse-sort"><option value="stars">Stars</option><option value="name">Name</option><option value="author">Author</option></select><button class="btn-icon-glass" id="browse-sort-dir" title="Ascending" aria-label="Sort ascending"><i class="fa-solid fa-arrow-down-short-wide"></i></button></div>
+        <div class="collection-views" role="group" aria-label="Browse view"><button id="browse-view-grid" class="btn-glass" title="Grid" data-view="grid" aria-pressed="false"><i class="fa-solid fa-table-cells" aria-hidden="true"></i><span>Grid</span></button><button id="browse-view-list" class="btn-glass" title="List" data-view="list" aria-pressed="false"><i class="fa-solid fa-list" aria-hidden="true"></i><span>List</span></button></div>
+        <div class="collection-actions"><button id="browse-refresh" class="btn-glass" title="Refresh" ><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>Refresh</span></button></div>
+      </div>
+      <div class="collection-filters"><label><input type="checkbox" id="browse-hide-installed"> Hide installed</label><span class="collection-count"></span></div>
+    </div>
             <div class="flex-1 overflow-y-auto p-4">
                 <div class="browse-nodes-container grid-view" id="browse-nodes-list">
                     <div class="loading-state col-span-full flex flex-col items-center justify-center py-20">
@@ -1319,6 +1089,6 @@
         </div>
     </div>
 
-    <script src="app.js?v=1.2.2"></script>
+    <script src="app.js?v=1.4.5-ui2"></script>
 </body>
 </html>

@@ -9,6 +9,7 @@ nodes_cache.json
 # Generated launcher scripts (user-specific)
 data/launch_*.py
 data/launch_*.bat
+data/launch_*.sh
 
 # User data files (generated at runtime)
 data/favorites.json
@@ -16,6 +17,10 @@ data/tags.json
 data/notes.json
 data/settings.json
 data/usage.json
+data/profiles.json
+data/blocked_packages.txt
+data/pending_workflow.json
+data/workflow_index_cache.json
 
 # IDE
 .vscode/

@@ -3,9 +3,13 @@ MF_Conductor - Node Scanner Module
 Scans and parses ComfyUI custom node directories
 """
 
+import gc
 import os
 import json
 import re
+import shutil
+import stat
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple
@@ -14,9 +18,43 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 import ssl
 import importlib.metadata
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+try:
+    from .security_utils import contained_path, safe_node_name, valid_commit_hash
+except ImportError:
+    from security_utils import contained_path, safe_node_name, valid_commit_hash
 
 
-CACHE_VERSION = '1.3'
+CACHE_VERSION = '1.5'
+_CLASS_MAPPINGS_RE = re.compile(r'\b[A-Za-z_][A-Za-z0-9_]*CLASS_MAPPINGS\b')
+_JS_REGISTER_RE = re.compile(r'registerNodeType\s*\(\s*[\'"]([^\'"]+)[\'"]')
+_NODE_ID_RE = re.compile(r'\bnode_id\s*=\s*[\'"]([^\'"]+)[\'"]')
+_CONFIG_ENTRY_RE = re.compile(r'[\'"]([A-Za-z_][\w.\-]*)[\'"]\s*:\s*\{')
+
+
+def _mapping_keys(content: str, symbol: str = 'NODE_CLASS_MAPPINGS') -> List[str]:
+    idx = content.find(symbol)
+    if idx < 0:
+        return []
+    eq = content.find('=', idx)
+    brace = content.find('{', eq if eq >= 0 else idx)
+    if eq < 0 or brace < 0 or brace - eq > 80:
+        return []
+    depth = 0
+    end = None
+    for i, char in enumerate(content[brace:], brace):
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end is None:
+        return []
+    return re.findall(r'["\']([^"\']+)["\']\s*:', content[brace + 1:end])
+
 
 # Simple GitHub stars cache to avoid hitting rate limits
 _github_stars_cache = {}
@@ -451,8 +489,8 @@ def lookup_node_in_db(folder_name: str, custom_nodes_path: Path) -> Optional[dic
     return None
 
 
-def fetch_github_stars(url: str) -> int:
-    """Fetch star count - first from cached github-stats.json, then API"""
+def fetch_github_stars(url: str, allow_network: bool = False) -> int:
+    """Star count from Manager's github-stats.json. Network only when allow_network=True."""
     if not url or 'github.com' not in url:
         return 0
     
@@ -485,7 +523,10 @@ def fetch_github_stars(url: str) -> int:
             _github_stars_cache[url] = stars
             return stars
     
-    # Fallback to API (rate limited - only if not found in cache file)
+    if not allow_network:
+        _github_stars_cache[url] = 0
+        return 0
+
     try:
         # Extract owner/repo from URL
         parts = url.replace('https://github.com/', '').replace('http://github.com/', '').split('/')
@@ -519,8 +560,15 @@ class CustomNode:
     def __init__(self, folder_path: str):
         self.folder_path = Path(folder_path)
         self.folder_name = self.folder_path.name
-        self.is_disabled = self.folder_name.endswith('.disabled')
-        self.base_folder_name = self.folder_name[:-9] if self.is_disabled else self.folder_name
+        
+        # ComfyUI skips folders whose name ends in .disabled.
+        if self.folder_name.endswith('.disabled'):
+            self.is_disabled = True
+            self.base_folder_name = self.folder_name[:-9]
+        else:
+            self.is_disabled = False
+            self.base_folder_name = self.folder_name
+        
         self.display_name = self._clean_display_name()
         self.git_url: Optional[str] = None
         self.author: Optional[str] = None
@@ -614,25 +662,6 @@ class CustomNode:
             except Exception:
                 pass
         
-        # Try running git command as fallback
-        try:
-            result = subprocess.run(
-                ['git', 'config', '--get', 'remote.origin.url'],
-                cwd=str(self.folder_path),
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                url = result.stdout.strip()
-                if url.startswith('git@github.com:'):
-                    url = url.replace('git@github.com:', 'https://github.com/')
-                if url.endswith('.git'):
-                    url = url[:-4]
-                return url
-        except Exception:
-            pass
-        
         return None
     
     def _parse_github_info(self):
@@ -641,8 +670,7 @@ class CustomNode:
             parts = self.git_url.replace('https://github.com/', '').replace('http://github.com/', '').split('/')
             if len(parts) >= 1:
                 self.author = parts[0]
-            # Fetch star count
-            self.stars = fetch_github_stars(self.git_url)
+            self.stars = fetch_github_stars(self.git_url, allow_network=False)
     
     def _check_requirements(self):
         """Check if requirements.txt exists"""
@@ -656,21 +684,19 @@ class CustomNode:
             self.date_added = datetime.fromtimestamp(stat.st_ctime)
             self.last_updated = datetime.fromtimestamp(stat.st_mtime)
             
-            # Try to get more accurate last update from git
+            # Use .git/FETCH_HEAD or .git/refs/heads as a fast proxy for last git activity
             if self.is_git_repo:
-                try:
-                    result = subprocess.run(
-                        ['git', 'log', '-1', '--format=%ct'],
-                        cwd=str(self.folder_path),
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result.returncode == 0 and result.stdout.strip():
-                        timestamp = int(result.stdout.strip())
-                        self.last_updated = datetime.fromtimestamp(timestamp)
-                except Exception:
-                    pass
+                git_dir = self.folder_path / '.git'
+                for marker in ['FETCH_HEAD', 'refs/heads']:
+                    marker_path = git_dir / marker
+                    if marker_path.exists():
+                        try:
+                            git_time = datetime.fromtimestamp(marker_path.stat().st_mtime)
+                            if git_time > self.last_updated:
+                                self.last_updated = git_time
+                        except Exception:
+                            pass
+                        break
         except Exception:
             pass
     
@@ -903,149 +929,134 @@ class CustomNode:
             self._parse_github_info()
     
     def _extract_provided_nodes(self):
-        """Extract the list of nodes this package provides from NODE_CLASS_MAPPINGS"""
+        """Collect registered node type keys from this package."""
         self.provided_nodes = []
-        
-        init_file = self.folder_path / '__init__.py'
-        if not init_file.exists():
-            return
-        
         try:
-            with open(init_file, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-            # Method 1: Look for NODE_CLASS_MAPPINGS = { ... } with quoted string keys
-            # Match "NodeName": ClassName or 'NodeName': ClassName
-            mapping_match = re.search(
-                r'NODE_CLASS_MAPPINGS\s*=\s*\{([^}]+)\}',
-                content,
-                re.DOTALL
-            )
-            
-            if mapping_match:
-                mapping_content = mapping_match.group(1)
-                
-                # Pattern A: Quoted string keys -> "NodeName": ClassName
-                quoted_keys = re.findall(r'["\']([^"\']+)["\']\s*:', mapping_content)
-                if quoted_keys:
-                    self.provided_nodes = quoted_keys
-                
-                # Pattern B: ClassName.NAME: ClassName pattern (extract class names)
-                if not self.provided_nodes:
-                    class_name_keys = re.findall(r'(\w+)\.NAME\s*:', mapping_content)
-                    if class_name_keys:
-                        self.provided_nodes = class_name_keys
-            
-            # Method 2: Look for NODE_DISPLAY_NAME_MAPPINGS for prettier names
-            display_match = re.search(
-                r'NODE_DISPLAY_NAME_MAPPINGS\s*=\s*\{([^}]+)\}',
-                content,
-                re.DOTALL
-            )
-            
-            if display_match and not self.provided_nodes:
-                display_content = display_match.group(1)
-                # Get the values (display names) from: "key": "Display Name"
-                pairs = re.findall(r':\s*["\']([^"\']+)["\']', display_content)
-                if pairs:
-                    self.provided_nodes = pairs
-            
-            # Method 3: Check if NODE_CLASS_MAPPINGS is imported from another module
-            if not self.provided_nodes:
-                import_match = re.search(
-                    r'from\s+\.(\S+)\s+import.*NODE_CLASS_MAPPINGS',
-                    content
-                )
-                if import_match:
-                    # Try to read the source module
-                    submodule = import_match.group(1).replace('.', '/')
-                    for ext in ['.py', '/__init__.py']:
-                        subfile = self.folder_path / (submodule + ext)
-                        if subfile.exists():
-                            self.provided_nodes = self._extract_nodes_from_file(subfile)
-                            break
-            
-            # Method 4: Look for dynamic NODE_CLASS_MAPPINGS updates
-            if not self.provided_nodes:
-                dynamic_nodes = re.findall(
-                    r'NODE_CLASS_MAPPINGS\s*\[\s*["\']([^"\']+)["\']\s*\]',
-                    content
-                )
-                if dynamic_nodes:
-                    self.provided_nodes.extend(dynamic_nodes)
-            
-            # Method 5: Search all .py files for class definitions with ComfyUI markers
-            if not self.provided_nodes:
-                self.provided_nodes = self._find_node_classes_in_package()
-            
-            # Remove duplicates while preserving order
+            keys, _saw_mapping = self._collect_mapping_keys()
+            if not keys:
+                keys = self._find_node_classes_in_package()
+            keys.extend(self._collect_js_node_types())
             seen = set()
             unique_nodes = []
-            for node in self.provided_nodes:
-                if node not in seen and not node.startswith('_'):
+            skip_keys = {'class', 'name', 'display_name'}
+            for node in keys:
+                if node not in seen and not node.startswith('_') and node not in skip_keys:
                     seen.add(node)
                     unique_nodes.append(node)
             self.provided_nodes = unique_nodes
-            
-        except Exception as e:
-            # Silently fail - node extraction is non-critical
+        except Exception:
             pass
-    
-    def _extract_nodes_from_file(self, file_path: Path) -> List[str]:
-        """Extract node names from a specific Python file"""
-        nodes = []
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-            # Look for NODE_CLASS_MAPPINGS dict
-            mapping_match = re.search(
-                r'NODE_CLASS_MAPPINGS\s*=\s*\{([^}]+)\}',
-                content,
-                re.DOTALL
-            )
-            
-            if mapping_match:
-                mapping_content = mapping_match.group(1)
-                # Quoted string keys
-                quoted = re.findall(r'["\']([^"\']+)["\']\s*:', mapping_content)
-                if quoted:
-                    nodes = quoted
-                else:
-                    # ClassName.NAME pattern
-                    class_names = re.findall(r'(\w+)\.NAME\s*:', mapping_content)
-                    if class_names:
-                        nodes = class_names
-        except (OSError, IOError, UnicodeDecodeError):
-            pass
-        return nodes
-    
-    def _find_node_classes_in_package(self) -> List[str]:
-        """Search for ComfyUI node classes in all Python files"""
-        nodes = []
+
+    def _iter_package_py_files(self) -> List[Path]:
+        skip_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.venv', 'site-packages'}
+        files = []
         try:
             for py_file in self.folder_path.rglob('*.py'):
-                # Skip test files and hidden directories
-                if 'test' in str(py_file).lower() or '/.' in str(py_file) or '\\.' in str(py_file):
+                parts = {p.lower() for p in py_file.relative_to(self.folder_path).parts}
+                if parts & skip_dirs:
                     continue
-                
-                try:
-                    with open(py_file, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                    
-                    # Look for classes with ComfyUI markers
-                    # Pattern: class ClassName: followed by CATEGORY = or INPUT_TYPES
-                    class_matches = re.findall(
-                        r'class\s+(\w+)[^:]*:.*?(?:CATEGORY\s*=|INPUT_TYPES|RETURN_TYPES)',
-                        content,
-                        re.DOTALL
-                    )
-                    nodes.extend(class_matches)
-                except (OSError, IOError, UnicodeDecodeError):
+                name = py_file.name.lower()
+                if name.startswith('test_') or name.endswith('_test.py'):
                     continue
-        except (OSError, IOError):
-            pass
+                files.append(py_file)
+        except OSError:
+            return []
+        init_file = self.folder_path / '__init__.py'
+        if init_file in files:
+            files.remove(init_file)
+            files.insert(0, init_file)
+        return files
+
+    def _mapping_keys_from_text(self, content: str) -> List[str]:
+        keys = []
+        symbols = {'NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'NODE_CONFIG'}
+        symbols.update(_CLASS_MAPPINGS_RE.findall(content))
+        for symbol in symbols:
+            keys.extend(_mapping_keys(content, symbol))
+            update_name = f'{symbol}.update'
+            if update_name in content:
+                keys.extend(_mapping_keys(
+                    content.replace(update_name, f'{symbol} ='),
+                    symbol,
+                ))
+        keys.extend(re.findall(r'NODE_CLASS_MAPPINGS\s*\[\s*["\']([^"\']+)["\']\s*\]', content))
+        keys.extend(re.findall(r'NODE_CLASS_MAPPINGS\s*=\s*\{[^}]*(\w+)\.NAME\s*:', content))
+        if 'NODE_CONFIG' in content:
+            keys.extend(_CONFIG_ENTRY_RE.findall(content))
+        keys.extend(_NODE_ID_RE.findall(content))
+        return keys
+
+    def _collect_mapping_keys(self) -> Tuple[List[str], bool]:
+        keys = []
+        saw_mapping = False
+        for py_file in self._iter_package_py_files():
+            try:
+                with open(py_file, 'r', encoding='utf-8', errors='ignore') as handle:
+                    content = handle.read(800000)
+            except (OSError, IOError, UnicodeDecodeError):
+                continue
+            if (
+                'NODE_CLASS_MAPPINGS' not in content
+                and 'NODE_DISPLAY_NAME_MAPPINGS' not in content
+                and 'NODE_CONFIG' not in content
+                and 'node_id' not in content
+                and 'CLASS_MAPPINGS' not in content
+            ):
+                continue
+            saw_mapping = True
+            keys.extend(self._mapping_keys_from_text(content))
+        return keys, saw_mapping
+
+    def _extract_nodes_from_file(self, file_path: Path) -> List[str]:
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as handle:
+                return self._mapping_keys_from_text(handle.read(100000))
+        except (OSError, IOError, UnicodeDecodeError):
+            return []
+
+    def _find_node_classes_in_package(self) -> List[str]:
+        nodes = []
+        for py_file in self._iter_package_py_files()[:80]:
+            try:
+                with open(py_file, 'r', encoding='utf-8', errors='ignore') as handle:
+                    content = handle.read(50000)
+            except (OSError, IOError, UnicodeDecodeError):
+                continue
+            if 'INPUT_TYPES' not in content or 'RETURN_TYPES' not in content:
+                continue
+            nodes.extend(re.findall(r'^class\s+(\w+)', content, re.MULTILINE))
         return nodes
+
+    def _iter_package_js_files(self) -> List[Path]:
+        files = []
+        skip_dirs = {'.git', 'node_modules', 'venv', '.venv', '__pycache__'}
+        for name in ('web', 'js', 'dist'):
+            root = self.folder_path / name
+            if not root.is_dir():
+                continue
+            try:
+                for path in root.rglob('*'):
+                    if path.suffix.lower() not in {'.js', '.mjs'}:
+                        continue
+                    parts = {p.lower() for p in path.relative_to(self.folder_path).parts}
+                    if parts & skip_dirs:
+                        continue
+                    files.append(path)
+                    if len(files) >= 40:
+                        return files
+            except OSError:
+                continue
+        return files
+
+    def _collect_js_node_types(self) -> List[str]:
+        keys = []
+        for path in self._iter_package_js_files():
+            try:
+                text = path.read_text(encoding='utf-8', errors='ignore')[:200000]
+            except (OSError, UnicodeDecodeError):
+                continue
+            keys.extend(_JS_REGISTER_RE.findall(text))
+        return keys
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
@@ -1067,6 +1078,24 @@ class CustomNode:
             'provided_nodes': self.provided_nodes,
             'node_count': len(self.provided_nodes),
         }
+
+
+def _rename_node_folder(src: Path, dest: Path) -> None:
+    """Rename a pack folder, retrying when Windows still has it open.
+
+    Antivirus, search indexing, and an open directory scan all surface as
+    PermissionError. A short retry lets those handles drop.
+    """
+    last_error = None
+    for attempt in range(6):
+        try:
+            os.rename(src, dest)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            gc.collect()
+            time.sleep(0.05 * (attempt + 1))
+    raise last_error
 
 
 class NodeScanner:
@@ -1117,15 +1146,16 @@ class NodeScanner:
             name = item.name
             if name.endswith('.disabled'):
                 name = name[:-9]
-            if name in seen:
+            key = name.lower()
+            if key in seen:
                 continue
-            seen.add(name)
+            seen.add(key)
             folders.append(name)
         
         return folders
     
     def scan(self, use_cache: bool = False) -> List[Dict[str, Any]]:
-        """Scan all custom nodes and return as list of dicts"""
+        """Scan all custom nodes in parallel and return as list of dicts"""
         if use_cache and self._cache_file.exists():
             try:
                 with open(self._cache_file, 'r', encoding='utf-8') as f:
@@ -1137,38 +1167,43 @@ class NodeScanner:
         
         self.nodes = []
         
-        # Items to skip
         skip_items = {
             '__pycache__',
             '.git',
             'example_node.py.example',
         }
         
+        dirs_to_scan = []
         for item in self.custom_nodes_path.iterdir():
-            # Skip files and special directories
             if not item.is_dir():
                 continue
-            if item.name in skip_items:
-                continue
-            if item.name.startswith('.'):
+            if item.name in skip_items or item.name.startswith('.'):
                 continue
             
-            # Check if it looks like a custom node (has __init__.py or .py files)
             has_python = any(
                 f.suffix == '.py' for f in item.iterdir() if f.is_file()
             ) if item.is_dir() else False
+            has_frontend = (item / 'web').is_dir() or (item / 'js').is_dir()
             
-            if has_python or (item / '__init__.py').exists():
-                try:
-                    node = CustomNode(str(item))
+            if has_python or has_frontend or (item / '__init__.py').exists():
+                dirs_to_scan.append(item)
+        
+        def _scan_one(item_path):
+            try:
+                return CustomNode(str(item_path))
+            except Exception as e:
+                print(f"Error scanning {item_path}: {e}")
+                return None
+        
+        workers = min(4, len(dirs_to_scan)) or 1
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_scan_one, d): d for d in dirs_to_scan}
+            for future in as_completed(futures):
+                node = future.result()
+                if node is not None:
                     self.nodes.append(node)
-                except Exception as e:
-                    print(f"Error scanning {item}: {e}")
         
-        # Sort by display name by default
         self.nodes.sort(key=lambda n: n.display_name.lower())
-        
-        # Save cache
         self._save_cache()
         
         return [node.to_dict() for node in self.nodes]
@@ -1200,9 +1235,11 @@ class NodeScanner:
         except Exception:
             return None
     
-    def _invalidate_cache(self):
-        """Clear in-memory node list and delete the on-disk cache file"""
+    def _invalidate_cache(self, persist: bool = True):
+        """Clear in-memory node list. persist=False keeps the on-disk cache."""
         self.nodes = []
+        if not persist:
+            return
         try:
             if self._cache_file.exists():
                 self._cache_file.unlink()
@@ -1220,84 +1257,142 @@ class NodeScanner:
         """Force refresh the node list"""
         return self.scan(use_cache=False)
     
+    def _safe_node_path(self, folder_name: str, must_exist: bool = True):
+        """Resolve a node folder under custom_nodes. Returns (Path|None, name_or_error)."""
+        ok, name = safe_node_name(folder_name)
+        if not ok:
+            return None, name
+        root = self.custom_nodes_path.resolve()
+        for cand in (root / name, root / f"{name}.disabled"):
+            if cand.exists():
+                if not contained_path(cand, root):
+                    return None, 'Invalid path'
+                actual = cand.name[:-9] if cand.name.endswith('.disabled') else cand.name
+                return cand, actual
+        target = name.lower()
+        try:
+            # Snapshot names first. Returning out of iterdir() leaves a Windows
+            # directory handle open, and the following rename then fails with
+            # access denied on every pack still being scanned.
+            entries = []
+            for item in root.iterdir():
+                if item.is_dir():
+                    entries.append(item.name)
+            for entry_name in entries:
+                base = entry_name[:-9] if entry_name.endswith('.disabled') else entry_name
+                if base.lower() != target:
+                    continue
+                item = root / entry_name
+                if not contained_path(item, root):
+                    return None, 'Invalid path'
+                return item, base
+        except OSError:
+            pass
+        if must_exist:
+            return None, f"Folder not found: {name}"
+        dest = root / name
+        if not contained_path(dest, root):
+            return None, 'Invalid path'
+        return dest, name
+
     def remove_node(self, folder_name: str) -> tuple:
         """Remove (delete) a custom node folder"""
         import shutil
-        
-        target_path = self.custom_nodes_path / folder_name
-        
-        if not target_path.exists():
-            return False, f"Folder not found: {folder_name}"
-        
-        # Safety check - make sure it's in custom_nodes
         try:
-            target_path.resolve().relative_to(self.custom_nodes_path.resolve())
-        except ValueError:
-            return False, "Security error: Invalid path"
-        except Exception as e:
-            return False, f"Path error: {e}"
-        
+            from .user_data import is_required_node_folder
+        except ImportError:
+            from user_data import is_required_node_folder
+
+        target_path, name = self._safe_node_path(folder_name)
+        if target_path is None:
+            return False, name
+        if is_required_node_folder(name):
+            return False, f"{name} must stay installed"
+
         try:
             shutil.rmtree(str(target_path))
             self._invalidate_cache()
-            return True, f"Successfully removed {folder_name}"
+            return True, f"Successfully removed {name}"
         except PermissionError:
-            return False, f"Permission denied. Close any applications using files in {folder_name}"
+            return False, f"Permission denied. Close any applications using files in {name}"
         except Exception as e:
             return False, f"Failed to remove: {e}"
-    
+
     def deactivate_node(self, folder_name: str) -> tuple:
-        """Deactivate a custom node by renaming with .disabled suffix"""
-        target_path = self.custom_nodes_path / folder_name
-        disabled_path = self.custom_nodes_path / f"{folder_name}.disabled"
-        
-        if not target_path.exists():
-            return False, f"Folder not found: {folder_name}"
-        
-        if disabled_path.exists():
-            return False, f"Disabled version already exists: {folder_name}.disabled"
-        
+        """Disable a node by renaming it to name.disabled (ComfyUI-native)."""
         try:
-            target_path.rename(disabled_path)
-            self._invalidate_cache()
-            return True, f"Deactivated {folder_name} (renamed to {folder_name}.disabled)"
+            from .user_data import is_required_node_folder
+        except ImportError:
+            from user_data import is_required_node_folder
+
+        target_path, name = self._safe_node_path(folder_name)
+        if target_path is None:
+            return False, name
+        if is_required_node_folder(name):
+            return False, f"{name} must stay enabled"
+
+        dest = target_path.parent / f"{name}.disabled"
+        if not target_path.name.endswith('.disabled') and dest.exists() and dest.resolve() != target_path.resolve():
+            return False, f"Cannot disable {name}: duplicate folders; both copies preserved"
+
+        marker = target_path / '.disabled'
+        if marker.exists():
+            try:
+                marker.unlink()
+            except OSError as e:
+                return False, f"Failed to clear leftover .disabled file: {e}"
+
+        if target_path.name.endswith('.disabled'):
+            return False, f"Node is already disabled: {name}"
+
+        try:
+            _rename_node_folder(target_path, dest)
+            self._invalidate_cache(persist=False)
+            return True, f"Deactivated {name}"
         except PermissionError:
-            return False, f"Permission denied. Close any applications using files in {folder_name}"
+            return False, f"Permission denied. Close any applications using files in {name}"
         except Exception as e:
             return False, f"Failed to deactivate: {e}"
-    
+
     def activate_node(self, folder_name: str) -> tuple:
-        """Reactivate a disabled custom node by removing .disabled suffix"""
-        # Handle both cases: with and without .disabled suffix
-        if folder_name.endswith('.disabled'):
-            disabled_path = self.custom_nodes_path / folder_name
-            active_name = folder_name[:-9]  # Remove .disabled
-        else:
-            disabled_path = self.custom_nodes_path / f"{folder_name}.disabled"
-            active_name = folder_name
-        
-        active_path = self.custom_nodes_path / active_name
-        
-        if not disabled_path.exists():
-            return False, f"Disabled folder not found: {disabled_path.name}"
-        
-        if active_path.exists():
-            return False, f"Active version already exists: {active_name}"
-        
-        try:
-            disabled_path.rename(active_path)
-            self._invalidate_cache()
-            return True, f"Activated {active_name}"
-        except PermissionError:
-            return False, f"Permission denied. Close any applications using files in {disabled_path.name}"
-        except Exception as e:
-            return False, f"Failed to activate: {e}"
-    
+        """Enable a node by removing name.disabled and leftover .disabled files."""
+        target_path, name = self._safe_node_path(folder_name)
+        if target_path is None:
+            return False, name
+
+        dest = target_path.parent / name
+        disabled = target_path.parent / f"{name}.disabled"
+        if dest.exists() and disabled.exists() and dest.resolve() != disabled.resolve():
+            return False, f"Already active {name}: duplicate folders; both copies preserved"
+        changed = False
+
+        marker = target_path / '.disabled'
+        if marker.exists():
+            try:
+                marker.unlink()
+                changed = True
+            except OSError as e:
+                return False, f"Failed to clear leftover .disabled file: {e}"
+
+        if target_path.name.endswith('.disabled'):
+            try:
+                _rename_node_folder(target_path, dest)
+                self._invalidate_cache(persist=False)
+                return True, f"Activated {name}"
+            except PermissionError:
+                return False, f"Permission denied. Close any applications using files in {name}"
+            except Exception as e:
+                return False, f"Failed to activate: {e}"
+
+        if changed:
+            self._invalidate_cache(persist=False)
+            return True, f"Activated {name}"
+        return False, f"Node is already active: {name}"
+
     def get_disk_usage(self, folder_name: str) -> Dict[str, Any]:
         """Calculate disk usage for a node"""
-        target_path = self.custom_nodes_path / folder_name
-        
-        if not target_path.exists():
+        target_path, _name = self._safe_node_path(folder_name)
+        if target_path is None:
             return {'size_bytes': 0, 'size_formatted': '0 B', 'file_count': 0}
         
         total_size = 0
@@ -1334,7 +1429,15 @@ class NodeScanner:
     
     def check_for_updates(self, folder_name: str) -> Dict[str, Any]:
         """Check if a git repo has updates available"""
-        target_path = self.custom_nodes_path / folder_name
+        target_path, err = self._safe_node_path(folder_name)
+        if target_path is None:
+            return {
+                'has_updates': False,
+                'commits_behind': 0,
+                'current_commit': None,
+                'remote_commit': None,
+                'error': err,
+            }
         git_dir = target_path / '.git'
         
         result = {
@@ -1415,7 +1518,9 @@ class NodeScanner:
     
     def update_node(self, folder_name: str) -> tuple:
         """Update a node via git pull"""
-        target_path = self.custom_nodes_path / folder_name
+        target_path, err = self._safe_node_path(folder_name)
+        if target_path is None:
+            return False, err
         git_dir = target_path / '.git'
         
         if not git_dir.exists():
@@ -1463,11 +1568,18 @@ class NodeScanner:
     
     def get_git_log(self, folder_name: str, count: int = 10) -> List[Dict[str, str]]:
         """Get recent git commits for a node"""
-        target_path = self.custom_nodes_path / folder_name
+        target_path, err = self._safe_node_path(folder_name)
+        if target_path is None:
+            return []
         git_dir = target_path / '.git'
         
         if not git_dir.exists():
             return []
+
+        try:
+            count = max(1, min(int(count), 100))
+        except (TypeError, ValueError):
+            count = 10
         
         try:
             import subprocess
@@ -1501,7 +1613,11 @@ class NodeScanner:
     
     def rollback_node(self, folder_name: str, commit_hash: str) -> tuple:
         """Rollback a node to a specific commit"""
-        target_path = self.custom_nodes_path / folder_name
+        if not valid_commit_hash(commit_hash):
+            return False, "Invalid commit hash"
+        target_path, err = self._safe_node_path(folder_name)
+        if target_path is None:
+            return False, err
         git_dir = target_path / '.git'
         
         if not git_dir.exists():
@@ -1510,9 +1626,8 @@ class NodeScanner:
         try:
             import subprocess
             
-            # Checkout specific commit
             result = subprocess.run(
-                ['git', 'checkout', commit_hash],
+                ['git', 'reset', '--hard', commit_hash.strip()],
                 cwd=str(target_path),
                 capture_output=True,
                 text=True,
@@ -1534,12 +1649,6 @@ class NodeScanner:
         for node in self.nodes:
             issues = []
             node_path = self.custom_nodes_path / node.folder_name
-            
-            # Check for __init__.py
-            if not (node_path / '__init__.py').exists():
-                issues.append("Missing __init__.py")
-            
-            # Check for syntax errors in Python files
             init_file = node_path / '__init__.py'
             if init_file.exists():
                 try:
@@ -1583,4 +1692,3 @@ if __name__ == '__main__':
             print(f"    Git: {node['git_url']}")
         if node['author'] != 'Unknown':
             print(f"    Author: {node['author']}")
-

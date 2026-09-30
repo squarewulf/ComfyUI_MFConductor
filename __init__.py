@@ -16,9 +16,6 @@ from aiohttp import web
 # Get the directory of this file
 MF_CONDUCTOR_DIR = Path(__file__).parent
 
-# Keep this for legacy absolute imports, but prefer explicit relative imports below.
-sys.path.insert(0, str(MF_CONDUCTOR_DIR))
-
 # Import each module separately to identify which one fails
 NodeScanner = None
 GitUtils = None
@@ -27,6 +24,8 @@ get_user_data = None
 browse_nodes = None
 get_categories = None
 refresh_node_database = None
+resolve_missing_packs = None
+install_missing_packs = None
 
 try:
     from .node_scanner import NodeScanner, get_node_requirements, refresh_installed_packages, CACHE_VERSION
@@ -52,10 +51,18 @@ except Exception as e:
     traceback.print_exc()
 
 try:
-    from .browse_nodes import browse_nodes, get_categories, refresh_node_database
+    from .browse_nodes import (
+        browse_nodes,
+        get_categories,
+        install_missing_packs,
+        refresh_node_database,
+        resolve_missing_packs,
+    )
     print("[MF Conductor] browse_nodes loaded")
 except Exception as e:
     print(f"[MF Conductor] Error loading browse_nodes: {e}")
+    install_missing_packs = None
+    resolve_missing_packs = None
 
 try:
     from .usage_tracker import get_usage_tracker
@@ -63,6 +70,38 @@ try:
 except Exception as e:
     print(f"[MF Conductor] Error loading usage_tracker: {e}")
     get_usage_tracker = None
+
+try:
+    from .workflow_analyzer import (
+        apply_enabled_folders,
+        clear_pending_workflow,
+        folders_for_profile,
+        folders_for_workflow_launch,
+        get_workflow_analyzer,
+        normalize_workflow_paths,
+        persist_pending_workflow,
+    )
+    print("[MF Conductor] workflow_analyzer loaded")
+except Exception as e:
+    print(f"[MF Conductor] Error loading workflow_analyzer: {e}")
+    apply_enabled_folders = None
+    folders_for_profile = None
+    folders_for_workflow_launch = None
+    get_workflow_analyzer = None
+    normalize_workflow_paths = None
+    persist_pending_workflow = None
+    clear_pending_workflow = None
+
+from .security_utils import (
+    escape_ps_string,
+    is_local_request,
+    resolve_under,
+    safe_node_name,
+    valid_git_url,
+    valid_pip_package,
+    valid_pip_version,
+)
+from .profile_launch import build_profile_args, parse_launch_flags, persist_blocked_packages, workflow_launch_options, write_desktop_shortcut, write_profile_launcher
 
 # Global instances
 _scanner = None
@@ -99,64 +138,6 @@ def get_pip():
                     raise RuntimeError("PipUtils module not loaded")
                 _pip = PipUtils()
     return _pip
-
-
-def create_standalone_launcher():
-    """Create a launcher batch file at the portable root level"""
-    try:
-        # Path: custom_nodes/ComfyUI_MFConductor -> ComfyUI -> ComfyUI_windows_portable
-        portable_root = MF_CONDUCTOR_DIR.parent.parent.parent
-        launcher_path = portable_root / "Launch_MF_Conductor.bat"
-        
-        # Only create if it doesn't exist (don't overwrite user modifications)
-        if launcher_path.exists():
-            return
-        
-        # Find the Python executable
-        python_path = portable_root / "python_embeded" / "python.exe"
-        if not python_path.exists():
-            python_path = portable_root / "python" / "python.exe"
-        
-        # Use relative paths in the batch file for portability
-        batch_content = f'''@echo off
-title MF Conductor - Standalone Mode
-cd /d "%~dp0"
-
-echo ========================================
-echo   MF Conductor - Standalone Server
-echo ========================================
-echo.
-
-REM Find Python executable
-if exist "python_embeded\\python.exe" (
-    set PYTHON=python_embeded\\python.exe
-) else if exist "python\\python.exe" (
-    set PYTHON=python\\python.exe
-) else (
-    echo ERROR: Python not found!
-    pause
-    exit /b 1
-)
-
-echo Starting MF Conductor on http://localhost:8199
-echo Press Ctrl+C to stop the server
-echo.
-
-"%PYTHON%" "ComfyUI\\custom_nodes\\ComfyUI_MFConductor\\standalone_server.py"
-
-pause
-'''
-        
-        with open(launcher_path, 'w', encoding='utf-8') as f:
-            f.write(batch_content)
-        
-        print(f"[MF Conductor] Created standalone launcher: {launcher_path}")
-    except Exception as e:
-        print(f"[MF Conductor] Could not create launcher: {e}")
-
-
-# Create the standalone launcher when module loads
-create_standalone_launcher()
 
 
 # =============================================================================
@@ -219,8 +200,9 @@ async def api_update_node(request):
     """Update a specific node via git pull"""
     try:
         folder_name = request.match_info.get('folder_name', '')
-        if not folder_name:
-            return web.json_response({'success': False, 'message': 'Folder name required'}, status=400)
+        ok, folder_name = safe_node_name(folder_name)
+        if not ok:
+            return web.json_response({'success': False, 'message': folder_name}, status=400)
         
         git = get_git()
         loop = asyncio.get_event_loop()
@@ -240,8 +222,12 @@ async def api_install_node(request):
         folder_name = folder_name_raw.strip() if folder_name_raw else None
         install_deps = data.get('install_deps', True)
         
-        if not url:
-            return web.json_response({'success': False, 'message': 'URL is required'}, status=400)
+        if not valid_git_url(url):
+            return web.json_response({'success': False, 'message': 'Invalid git URL'}, status=400)
+        if folder_name:
+            ok, folder_name = safe_node_name(folder_name)
+            if not ok:
+                return web.json_response({'success': False, 'message': folder_name}, status=400)
         
         git = get_git()
         pip = get_pip()
@@ -282,14 +268,10 @@ async def api_open_folder(request):
     """Open node folder in file explorer"""
     try:
         folder_name = request.match_info.get('folder_name', '')
-        if not folder_name:
-            return web.json_response({'success': False, 'message': 'Folder name required'}, status=400)
-        
         scanner = get_scanner()
-        folder_path = scanner.custom_nodes_path / folder_name
-        
-        if not folder_path.exists():
-            return web.json_response({'success': False, 'message': 'Folder not found'}, status=404)
+        folder_path, err = scanner._safe_node_path(folder_name)
+        if folder_path is None:
+            return web.json_response({'success': False, 'message': err}, status=400)
         
         import subprocess
         if sys.platform == 'win32':
@@ -358,16 +340,10 @@ async def serve_web_file(request):
     if not filename:
         filename = 'index.html'
     
-    web_dir = Path(__file__).parent / 'web'
-    file_path = web_dir / filename
-    
-    # Security check - prevent directory traversal
-    try:
-        file_path = file_path.resolve()
-        if not str(file_path).startswith(str(web_dir.resolve())):
-            return web.Response(status=403, text='Forbidden')
-    except Exception:
-        return web.Response(status=404, text='Not found')
+    web_dir = (Path(__file__).parent / 'web').resolve()
+    file_path = resolve_under(web_dir, *Path(filename).parts) if filename else web_dir / 'index.html'
+    if file_path is None:
+        return web.Response(status=403, text='Forbidden')
     
     if not file_path.exists():
         return web.Response(status=404, text='Not found')
@@ -416,6 +392,30 @@ try:
     
     routes = server.PromptServer.instance.routes
     print("[MF Conductor] Got PromptServer routes")
+
+    @web.middleware
+    async def _mf_local_only(request, handler):
+        if request.path.startswith('/mf_conductor/api'):
+            if not is_local_request(request):
+                return web.json_response({
+                    'success': False,
+                    'message': 'MF Conductor API is localhost-only',
+                }, status=403)
+            if request.method == 'POST' and request.content_type != 'application/json':
+                return web.json_response({
+                    'success': False,
+                    'message': 'Content-Type must be application/json',
+                }, status=415)
+        return await handler(request)
+
+    try:
+        server.PromptServer.instance.app.middlewares.insert(0, _mf_local_only)
+    except Exception:
+        try:
+            server.PromptServer.instance.app.middlewares.append(_mf_local_only)
+        except Exception as e:
+            print(f"[MF Conductor] Localhost middleware failed; API routes not registered: {e}")
+            raise
     
     # API Routes
     @routes.get('/mf_conductor/api/nodes')
@@ -454,14 +454,10 @@ try:
     async def _mnf_get_requirements(request):
         try:
             folder_name = request.match_info.get('folder_name', '')
-            if not folder_name:
-                return web.json_response({'success': False, 'message': 'Folder name required'}, status=400)
-            
             scanner = get_scanner()
-            folder_path = scanner.custom_nodes_path / folder_name
-            
-            if not folder_path.exists():
-                return web.json_response({'success': False, 'message': 'Folder not found', 'requirements': []})
+            folder_path, err = scanner._safe_node_path(folder_name)
+            if folder_path is None:
+                return web.json_response({'success': False, 'message': err, 'requirements': []}, status=400)
             
             # get_node_requirements imported at module level
             requirements = get_node_requirements(folder_path)
@@ -619,39 +615,24 @@ try:
             profile = user_data.get_profile(name)
             if not profile:
                 return web.json_response({'success': False, 'message': 'Profile not found'})
-            
+            if apply_enabled_folders is None or folders_for_profile is None:
+                return web.json_response({'success': False, 'message': 'Isolation is not available'}, status=500)
+
             scanner = get_scanner()
-            
+
             def _apply():
-                results = {'enabled': [], 'disabled': [], 'errors': []}
-                enabled_list = profile.get('enabled', [])
-                disabled_list = profile.get('disabled', [])
-                all_nodes = scanner.scan()
-                all_folders = [n['folder_name'] for n in all_nodes]
-                if not enabled_list and not disabled_list:
-                    for folder in all_folders:
-                        ok, msg = scanner.activate_node(folder)
-                        if ok:
-                            results['enabled'].append(folder)
-                else:
-                    enabled_set = set(enabled_list) if enabled_list else set(all_folders)
-                    for folder in all_folders:
-                        if folder in enabled_set:
-                            ok, msg = scanner.activate_node(folder)
-                            if ok:
-                                results['enabled'].append(folder)
-                            elif 'already' not in msg.lower():
-                                results['errors'].append(f"{folder}: {msg}")
-                        else:
-                            ok, msg = scanner.deactivate_node(folder)
-                            if ok:
-                                results['disabled'].append(folder)
-                            elif 'already' not in msg.lower():
-                                results['errors'].append(f"{folder}: {msg}")
+                results = apply_enabled_folders(
+                    scanner,
+                    folders_for_profile(profile, scanner.list_folder_names()),
+                )
+                if not results['errors']:
+                    persist_blocked_packages(profile.get('excluded_packages') or [])
                 return results
-            
+
             loop = asyncio.get_event_loop()
             results = await loop.run_in_executor(None, _apply)
+            if results['errors']:
+                return web.json_response({'success': False, 'message': '; '.join(results['errors']), 'results': results})
             return web.json_response({'success': True, 'results': results})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
@@ -659,51 +640,36 @@ try:
     @routes.post('/mf_conductor/api/profiles/launch')
     async def _mnf_launch_profile(request):
         try:
-            import subprocess
             data = await request.json()
             name = data.get('name', '')
             user_data = get_user_data()
             profile = user_data.get_profile(name)
             if not profile:
                 return web.json_response({'success': False, 'message': 'Profile not found'})
-            
-            # Create batch file for this profile
-            bat_path = Path(__file__).parent / 'profiles' / f'{name}.bat'
-            bat_path.parent.mkdir(exist_ok=True)
-            
-            # Build command line flags
-            flags = []
-            for key, value in (profile.get('flags') or {}).items():
-                if value:
-                    flags.append(value)
-            if profile.get('custom_flags'):
-                flags.append(profile.get('custom_flags'))
-            
-            flags_str = ' '.join(flags)
-            
-            # Find ComfyUI run script
-            comfy_root = Path(__file__).parent.parent.parent
-            run_script = comfy_root.parent / 'run_nvidia_gpu.bat'
-            if not run_script.exists():
-                run_script = comfy_root / 'main.py'
-            
-            # Create batch file content
-            if run_script.suffix == '.bat':
-                bat_content = f'@echo off\ncd /d "{comfy_root.parent}"\ncall "{run_script}" {flags_str}\n'
-            else:
-                python_path = Path(__file__).parent.parent.parent.parent / 'python_embeded' / 'python.exe'
-                if not python_path.exists():
-                    import sys
-                    python_path = sys.executable
-                bat_content = f'@echo off\ncd /d "{comfy_root}"\n"{python_path}" "{run_script}" {flags_str}\n'
-            
-            with open(bat_path, 'w') as f:
-                f.write(bat_content)
-            
-            # Launch the batch file
-            subprocess.Popen(['cmd', '/c', str(bat_path)], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
-            
-            return web.json_response({'success': True, 'message': f'Launching profile {name}...'})
+            if apply_enabled_folders is None or folders_for_profile is None:
+                return web.json_response({'success': False, 'message': 'Isolation is not available'}, status=500)
+
+            scanner = get_scanner()
+
+            def _apply():
+                results = apply_enabled_folders(
+                    scanner,
+                    folders_for_profile(profile, scanner.list_folder_names()),
+                )
+                if not results['errors']:
+                    persist_blocked_packages(profile.get('excluded_packages') or [])
+                return results
+
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, _apply)
+            if results['errors']:
+                return web.json_response({'success': False, 'message': '; '.join(results['errors']), 'results': results})
+            return web.json_response({
+                'success': True,
+                'launched': False,
+                'message': f'Applied profile "{name}". Restart ComfyUI to load the isolated node set and excluded packages.',
+                'results': results,
+            })
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -748,6 +714,196 @@ try:
             user_data = get_user_data()
             count = user_data.load_preset_profiles()
             return web.json_response({'success': True, 'message': f'Loaded {count} preset profiles', 'count': count})
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    # ==================== WORKFLOWS ====================
+
+    def _mnf_workflow_analyzer():
+        if get_workflow_analyzer is None:
+            raise RuntimeError('workflow_analyzer module not loaded')
+        scanner = get_scanner()
+        comfy_root = Path(__file__).parent.parent.parent
+        return get_workflow_analyzer(comfy_root, scanner)
+
+    def _mnf_installed_nodes(allow_scan=False):
+        scanner = get_scanner()
+        cached = scanner.get_cached_nodes(allow_stale=True)
+        if cached and cached.get('nodes'):
+            return cached['nodes']
+        if not allow_scan:
+            return []
+        return scanner.scan(use_cache=True) or []
+
+    @routes.get('/mf_conductor/api/workflows/launch-options')
+    async def _mnf_workflow_launch_options(request):
+        return web.json_response(workflow_launch_options(get_scanner(), get_user_data()))
+
+    @routes.get('/mf_conductor/api/workflows')
+    async def _mnf_list_workflows(request):
+        try:
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(
+                None, lambda: _mnf_workflow_analyzer().list_workflows(_mnf_installed_nodes())
+            )
+            return web.json_response(data)
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.get('/mf_conductor/api/workflows/analyze')
+    async def _mnf_analyze_workflow(request):
+        try:
+            rel_path = request.query.get('path', '')
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(
+                None, lambda: _mnf_workflow_analyzer().analyze(rel_path, _mnf_installed_nodes(True), True)
+            )
+            return web.json_response(data)
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.post('/mf_conductor/api/workflows/resolve-missing')
+    async def _mnf_resolve_missing(request):
+        try:
+            if resolve_missing_packs is None:
+                return web.json_response({'success': False, 'message': 'browse_nodes module not loaded'}, status=500)
+            data = await request.json()
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, resolve_missing_packs, data.get('names') or [])
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.post('/mf_conductor/api/workflows/install-missing')
+    async def _mnf_install_missing(request):
+        try:
+            if install_missing_packs is None:
+                return web.json_response({'success': False, 'message': 'browse_nodes module not loaded'}, status=500)
+            data = await request.json()
+
+            def _install():
+                result = install_missing_packs(
+                    get_git(), get_pip(), get_scanner(), data.get('names') or []
+                )
+                get_scanner().refresh()
+                _mnf_workflow_analyzer().reset_maps()
+                return result
+
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _install)
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.post('/mf_conductor/api/workflows/apply')
+    async def _mnf_apply_workflow(request):
+        try:
+            data = await request.json()
+            rel_path = data.get('path', '')
+            if apply_enabled_folders is None:
+                return web.json_response({'success': False, 'message': 'workflow_analyzer module not loaded'}, status=500)
+
+            def _apply():
+                paths = normalize_workflow_paths(rel_path, data.get('paths')) if normalize_workflow_paths else ([rel_path] if rel_path else [])
+                if not paths:
+                    return {'success': False, 'message': 'Workflow path is required'}
+                batch = _mnf_workflow_analyzer().analyze_many(paths, _mnf_installed_nodes(True), False)
+                if not batch.get('success'):
+                    return batch
+                required = []
+                last = None
+                for analysis in batch.get('analyses') or []:
+                    last = analysis
+                    required.extend(analysis.get('required_folders') or [])
+                if persist_pending_workflow:
+                    persist_pending_workflow(paths[0], paths)
+                enabled = folders_for_workflow_launch({'required_folders': required}, get_scanner().list_folder_names())
+                results = apply_enabled_folders(get_scanner(), enabled)
+                _mnf_persist_default_blocks()
+                return {'success': True, 'results': results, 'analysis': last, 'paths': paths}
+
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _apply)
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    def _mnf_persist_default_blocks():
+        user_data = get_user_data()
+        for profile in user_data.get_profiles().values():
+            if profile.get('is_default'):
+                persist_blocked_packages(profile.get('excluded_packages') or [])
+                return
+        persist_blocked_packages([])
+
+    @routes.post('/mf_conductor/api/workflows/launch')
+    async def _mnf_launch_workflow(request):
+        """Integrated mode cannot spawn ComfyUI; apply isolation for the next restart."""
+        try:
+            data = await request.json()
+            selected_profile = get_user_data().get_profile(data.get('profile', '')) or {}
+            flags = parse_launch_flags(data['launch_flags']) if 'launch_flags' in data else build_profile_args(selected_profile)
+            rel_path = data.get('path', '')
+            if apply_enabled_folders is None:
+                return web.json_response({'success': False, 'message': 'workflow_analyzer module not loaded'}, status=500)
+
+            def _apply():
+                paths = normalize_workflow_paths(rel_path, data.get('paths')) if normalize_workflow_paths else ([rel_path] if rel_path else [])
+                if not paths:
+                    return {'success': False, 'message': 'Workflow path is required'}
+                batch = _mnf_workflow_analyzer().analyze_many(paths, _mnf_installed_nodes(True), False)
+                if not batch.get('success'):
+                    return batch
+                required = []
+                last = None
+                for analysis in batch.get('analyses') or []:
+                    last = analysis
+                    required.extend(analysis.get('required_folders') or [])
+                enabled = folders_for_workflow_launch({'required_folders': required}, get_scanner().list_folder_names(), data.get('extra_nodes') or [])
+                results = apply_enabled_folders(get_scanner(), enabled)
+                if results['errors']:
+                    return {'success': False, 'message': '; '.join(results['errors']), 'results': results}
+                persist_blocked_packages(selected_profile.get('excluded_packages') or [])
+                launcher = write_profile_launcher(MF_CONDUCTOR_DIR, 'Workflow launch', {
+                    'enabled': enabled, 'excluded_packages': selected_profile.get('excluded_packages') or [],
+                }, flags)
+                if persist_pending_workflow:
+                    persist_pending_workflow(paths[0], paths)
+                return {
+                    'success': True,
+                    'applied': True,
+                    'launched': False,
+                    'results': results,
+                    'analysis': last,
+                    'paths': paths,
+                    'launcher_path': str(launcher.with_suffix('.bat' if os.name == 'nt' else '.sh')),
+                    'flags': flags,
+                    'message': 'Selection applied. Stop ComfyUI, then run the generated Workflow launch file to use these flags.',
+                }
+
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _apply)
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.get('/mf_conductor/api/workflows/pending')
+    async def _mnf_pending_workflow(request):
+        try:
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(
+                None, lambda: _mnf_workflow_analyzer().pending_workflow_payload()
+            )
+            return web.json_response(data)
+        except Exception as e:
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.post('/mf_conductor/api/workflows/pending/ack')
+    async def _mnf_ack_pending_workflow(request):
+        try:
+            if clear_pending_workflow:
+                clear_pending_workflow()
+            return web.json_response({'success': True, 'pending': False})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
     
@@ -1123,24 +1279,20 @@ try:
             if not installed_packages:
                 return web.json_response({'success': True, 'updates': []})
             
-            # Step 2: Check PyPI API for each package in parallel (FAST)
-            async def check_package(pkg_info):
-                """Check a single package against PyPI"""
-                package_name = pkg_info.get('name', '').lower()
-                current_version = pkg_info.get('version', '')
-                
-                if not package_name or not current_version or current_version.startswith('file://'):
-                    return None
-                
-                try:
-                    url = f'https://pypi.org/pypi/{package_name}/json'
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as response:
+            connector = aiohttp.TCPConnector(limit=10)
+            async with aiohttp.ClientSession(connector=connector) as shared_session:
+                async def check_with_session(pkg_info):
+                    package_name = pkg_info.get('name', '').lower()
+                    current_version = pkg_info.get('version', '')
+                    if not valid_pip_package(package_name) or not current_version or current_version.startswith('file://'):
+                        return None
+                    try:
+                        url = f'https://pypi.org/pypi/{package_name}/json'
+                        async with shared_session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as response:
                             if response.status == 404:
-                                return None  # Package not on PyPI
-                            data = await response.json()
-                            latest_version = data.get('info', {}).get('version', '')
-                            
+                                return None
+                            pdata = await response.json()
+                            latest_version = pdata.get('info', {}).get('version', '')
                             if latest_version and latest_version != current_version:
                                 try:
                                     from packaging import version
@@ -1148,23 +1300,21 @@ try:
                                         return {
                                             'name': package_name,
                                             'current_version': current_version,
-                                            'latest_version': latest_version
+                                            'latest_version': latest_version,
                                         }
                                 except (ImportError, ValueError, TypeError):
                                     if latest_version > current_version:
                                         return {
                                             'name': package_name,
                                             'current_version': current_version,
-                                            'latest_version': latest_version
+                                            'latest_version': latest_version,
                                         }
-                except (aiohttp.ClientError, asyncio.TimeoutError, Exception):
-                    pass  # Network error - skip this package
-                
-                return None
-            
-            # Check packages in parallel (20 concurrent requests)
-            tasks = [check_package(pkg) for pkg in installed_packages]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+                    except (aiohttp.ClientError, asyncio.TimeoutError, Exception):
+                        return None
+                    return None
+
+                tasks = [check_with_session(pkg) for pkg in installed_packages]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
             
             updates = [r for r in results if r and not isinstance(r, Exception)]
             
@@ -1185,8 +1335,8 @@ try:
             data = await request.json()
             package_name = data.get('package_name', '')
             
-            if not package_name:
-                return web.json_response({'success': False, 'message': 'Package name is required'}, status=400)
+            if not valid_pip_package(package_name):
+                return web.json_response({'success': False, 'message': 'Invalid package name'}, status=400)
             
             try:
                 pip = get_pip()
@@ -1298,8 +1448,8 @@ try:
             data = await request.json()
             package_name = data.get('package_name', '')
             
-            if not package_name:
-                return web.json_response({'success': False, 'message': 'Package name is required'}, status=400)
+            if not valid_pip_package(package_name):
+                return web.json_response({'success': False, 'message': 'Invalid package name'}, status=400)
             
             try:
                 pip = get_pip()
@@ -1312,7 +1462,7 @@ try:
                 python_path = sys.executable
             
             proc = await asyncio.create_subprocess_exec(
-                python_path, '-m', 'pip', 'install', package_name,
+                python_path, '-m', 'pip', 'install', package_name.strip(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -1332,6 +1482,10 @@ try:
         except Exception as e:
             print(f"[MF_Conductor] Error installing package: {e}")
             return web.json_response({'success': False, 'message': str(e)}, status=500)
+
+    @routes.post('/mf_conductor/api/install-package')
+    async def _mnf_install_package_alias(request):
+        return await _mnf_install_package(request)
     
     @routes.post('/mf_conductor/api/packages/uninstall')
     async def _mnf_uninstall_package(request):
@@ -1341,8 +1495,8 @@ try:
             data = await request.json()
             package_name = data.get('package_name', '')
             
-            if not package_name:
-                return web.json_response({'success': False, 'message': 'Package name is required'}, status=400)
+            if not valid_pip_package(package_name):
+                return web.json_response({'success': False, 'message': 'Invalid package name'}, status=400)
             
             try:
                 pip = get_pip()
@@ -1355,7 +1509,7 @@ try:
                 python_path = sys.executable
             
             proc = await asyncio.create_subprocess_exec(
-                python_path, '-m', 'pip', 'uninstall', '-y', package_name,
+                python_path, '-m', 'pip', 'uninstall', '-y', package_name.strip(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -1383,10 +1537,10 @@ try:
         try:
             data = await request.json()
             package_name = data.get('package_name', '')
-            version = data.get('version', None)  # Optional specific version
+            version = data.get('version', None)
             
-            if not package_name:
-                return web.json_response({'success': False, 'message': 'Package name is required'}, status=400)
+            if not valid_pip_package(package_name) or not valid_pip_version(version or ''):
+                return web.json_response({'success': False, 'message': 'Invalid package name or version'}, status=400)
             
             try:
                 pip = get_pip()
@@ -1432,8 +1586,8 @@ try:
             data = await request.json()
             package_name = data.get('package_name', '')
             
-            if not package_name:
-                return web.json_response({'success': False, 'message': 'Package name is required'}, status=400)
+            if not valid_pip_package(package_name):
+                return web.json_response({'success': False, 'message': 'Invalid package name'}, status=400)
             
             try:
                 pip = get_pip()
@@ -1446,7 +1600,7 @@ try:
                 python_path = sys.executable
             
             proc = await asyncio.create_subprocess_exec(
-                python_path, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', package_name,
+                python_path, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', package_name.strip(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -1523,14 +1677,19 @@ try:
             import subprocess
             data = await request.json()
             suggested_name = data.get('suggested_name', 'shortcut.lnk')
+            suggested_name = Path(str(suggested_name)).name
+            if not suggested_name.endswith('.lnk'):
+                suggested_name = 'shortcut.lnk'
             
             desktop = str(Path.home() / 'Desktop')
+            ps_desktop = escape_ps_string(desktop)
+            ps_name = escape_ps_string(suggested_name)
             ps_script = f'''
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.SaveFileDialog
-$dialog.InitialDirectory = "{desktop}"
+$dialog.InitialDirectory = "{ps_desktop}"
 $dialog.Filter = "Windows Shortcut (*.lnk)|*.lnk"
-$dialog.FileName = "{suggested_name}"
+$dialog.FileName = "{ps_name}"
 $dialog.Title = "Save Shortcut"
 $result = $dialog.ShowDialog()
 if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
@@ -1590,45 +1749,21 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
     async def _mnf_create_conductor_shortcut(request):
         """Create a shortcut to launch MF Conductor standalone server"""
         try:
-            import subprocess
-            import os
-            
-            if os.name != 'nt':
-                return web.json_response({'success': False, 'message': 'Shortcut creation is only supported on Windows'})
-            
             data = await request.json()
             save_path = data.get('save_path')
-            
             conductor_dir = Path(__file__).parent
-            batch_file = conductor_dir / 'Launch_MFConductor.bat'
-            icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
-            icon_line = f'$Shortcut.IconLocation = "{icon_path}"' if icon_path.exists() else ''
-            
-            if not save_path:
-                save_path = str(Path.home() / 'Desktop' / 'MF Conductor.lnk')
-            
-            if not save_path.endswith('.lnk'):
-                save_path = save_path + '.lnk'
-            
-            ps_script = f'''
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("{save_path}")
-$Shortcut.TargetPath = "{batch_file}"
-$Shortcut.WorkingDirectory = "{conductor_dir}"
-$Shortcut.Description = "Launch MF Conductor - ComfyUI Control Center"
-{icon_line}
-$Shortcut.Save()
-'''
-            result = subprocess.run(
-                ['powershell', '-Command', ps_script],
-                capture_output=True,
-                text=True
+            target = conductor_dir / ('Launch_MFConductor.bat' if os.name == 'nt' else 'Launch_MFConductor.sh')
+            dest, err = write_desktop_shortcut(
+                save_path,
+                str(target),
+                str(conductor_dir),
+                'MF Conductor',
+                'Launch MF Conductor - ComfyUI Control Center',
+                conductor_dir / 'web' / 'mfconductor_logo.ico',
             )
-            
-            if result.returncode == 0:
-                return web.json_response({'success': True, 'message': f'Shortcut created at {save_path}', 'path': save_path})
-            else:
-                return web.json_response({'success': False, 'message': f'PowerShell error: {result.stderr}'})
+            if dest is None:
+                return web.json_response({'success': False, 'message': err}, status=400)
+            return web.json_response({'success': True, 'message': f'Shortcut created at {dest}', 'path': str(dest)})
         except Exception as e:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
     
@@ -1636,194 +1771,42 @@ $Shortcut.Save()
     async def _mnf_create_profile_shortcut(request):
         """Create a shortcut that launches ComfyUI with a specific profile"""
         try:
-            import subprocess
-            import os
-            
-            if os.name != 'nt':
-                return web.json_response({'success': False, 'message': 'Shortcut creation is only supported on Windows'})
-            
             data = await request.json()
             profile_name = data.get('profile_name', '')
             save_path = data.get('save_path')
-            
             if not profile_name:
                 return web.json_response({'success': False, 'message': 'Profile name is required'}, status=400)
             
             user_data = get_user_data()
             profiles = user_data.get_profiles()
-            
             if profile_name not in profiles:
                 return web.json_response({'success': False, 'message': f'Profile "{profile_name}" not found'})
             
             profile = profiles[profile_name]
+            try:
+                args = build_profile_args(profile)
+            except ValueError as e:
+                return web.json_response({'success': False, 'message': str(e)}, status=400)
             
-            # Build command line args from profile
-            args = []
-            flags = profile.get('flags', {})
-            
-            # Process all flag values - flags are stored as {"vram": "--highvram", "attention": "--use-sage-attention"}
-            for key, value in flags.items():
-                if value and isinstance(value, str) and value.startswith('--'):
-                    args.extend(value.split())
-            
-            port = profile.get('port')
-            if port:
-                args.extend(['--port', str(port)])
-            
-            listen = profile.get('listen')
-            if listen:
-                args.extend(['--listen', listen])
-            
-            custom_flags = profile.get('custom_flags', '')
-            if custom_flags:
-                args.extend(custom_flags.split())
-            
-            custom_flags_list = profile.get('custom_flags_list', [])
-            if custom_flags_list:
-                for flag in custom_flags_list:
-                    if flag and isinstance(flag, str):
-                        args.extend(flag.split())
-            
-            # Get paths
             conductor_dir = Path(__file__).parent
-            comfy_root = conductor_dir.parent.parent
-            portable_root = comfy_root.parent
-            
-            python_path = portable_root / 'python_embeded' / 'python.exe'
-            if not python_path.exists():
-                python_path = Path(sys.executable)
-            
-            # Use provided save_path or default to Desktop
-            safe_name = "".join(c for c in profile_name if c.isalnum() or c in (' ', '-', '_')).strip()
-            if not save_path:
-                save_path = str(Path.home() / 'Desktop' / f'ComfyUI - {safe_name}.lnk')
-            
-            if not save_path.endswith('.lnk'):
-                save_path = save_path + '.lnk'
-            
-            # Get enabled/disabled node lists
-            enabled_list = repr(profile.get('enabled', []))
-            disabled_list = repr(profile.get('disabled', []))
-            args_str = repr(args)
-            
-            # Create a Python launcher script that applies the profile and launches ComfyUI
-            safe_filename = profile_name.replace(" ", "_").replace("-", "_")
-            launcher_script = conductor_dir / 'data' / f'launch_{safe_filename}.py'
-            launcher_script.parent.mkdir(parents=True, exist_ok=True)
-            
-            launcher_content = f'''#!/usr/bin/env python
-"""Auto-generated launcher for profile: {profile_name}"""
-import os
-import sys
-import subprocess
-from pathlib import Path
-
-# Profile configuration
-PROFILE_NAME = {repr(profile_name)}
-ENABLED_NODES = {enabled_list}
-DISABLED_NODES = {disabled_list}
-COMFY_ARGS = {args_str}
-
-def apply_node_states(custom_nodes_path):
-    """Enable/disable nodes according to profile"""
-    if not ENABLED_NODES and not DISABLED_NODES:
-        return  # No node management needed
-    
-    # Get all node folders
-    all_folders = []
-    for item in custom_nodes_path.iterdir():
-        if item.is_dir() and not item.name.startswith('.'):
-            name = item.name.replace('.disabled', '')
-            all_folders.append(name)
-    
-    enabled_set = set(ENABLED_NODES) if ENABLED_NODES else set(all_folders)
-    
-    for folder_name in all_folders:
-        folder_path = custom_nodes_path / folder_name
-        disabled_path = custom_nodes_path / f"{{folder_name}}.disabled"
-        
-        if folder_name in enabled_set:
-            # Should be enabled
-            if disabled_path.exists() and not folder_path.exists():
-                disabled_path.rename(folder_path)
-                print(f"Enabled: {{folder_name}}")
-        else:
-            # Should be disabled
-            if folder_path.exists() and not disabled_path.exists():
-                folder_path.rename(disabled_path)
-                print(f"Disabled: {{folder_name}}")
-
-def main():
-    # Paths
-    script_dir = Path(__file__).parent.parent
-    comfy_root = script_dir.parent.parent
-    custom_nodes_path = comfy_root / 'custom_nodes'
-    
-    print(f"Launching ComfyUI with profile: {{PROFILE_NAME}}")
-    
-    # Apply node states
-    if ENABLED_NODES or DISABLED_NODES:
-        print("Applying node configuration...")
-        apply_node_states(custom_nodes_path)
-    
-    # Find Python
-    portable_root = comfy_root.parent
-    python_path = portable_root / 'python_embeded' / 'python.exe'
-    if not python_path.exists():
-        python_path = sys.executable
-    
-    # Launch ComfyUI
-    main_py = comfy_root / 'main.py'
-    cmd = [str(python_path), str(main_py)] + COMFY_ARGS
-    
-    print(f"Command: {{' '.join(cmd)}}")
-    print("-" * 50)
-    
-    os.chdir(comfy_root)
-    subprocess.run(cmd)
-
-if __name__ == '__main__':
-    main()
-'''
-            
-            with open(launcher_script, 'w') as f:
-                f.write(launcher_content)
-            
-            # Create batch wrapper
-            batch_file = conductor_dir / 'data' / f'launch_{safe_filename}.bat'
-            batch_content = f'@echo off\ncd /d "{conductor_dir / "data"}"\n"{python_path}" "{launcher_script}"\npause\n'
-            
-            with open(batch_file, 'w') as f:
-                f.write(batch_content)
-            
-            # Use PowerShell to create the shortcut with MF Conductor icon
-            icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
-            icon_line = f'$Shortcut.IconLocation = "{icon_path}"' if icon_path.exists() else ''
-            
-            ps_script = f'''
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("{save_path}")
-$Shortcut.TargetPath = "{batch_file}"
-$Shortcut.WorkingDirectory = "{comfy_root}"
-$Shortcut.Description = "Launch ComfyUI with {profile_name} profile"
-{icon_line}
-$Shortcut.Save()
-'''
-            result = subprocess.run(
-                ['powershell', '-Command', ps_script],
-                capture_output=True,
-                text=True
+            launcher_script = write_profile_launcher(conductor_dir, profile_name, profile, args)
+            target = launcher_script.with_suffix('.bat' if os.name == 'nt' else '.sh')
+            dest, err = write_desktop_shortcut(
+                save_path,
+                str(target),
+                str(conductor_dir.parent.parent),
+                f'ComfyUI - {profile_name}',
+                f'Launch ComfyUI with {profile_name} profile',
+                conductor_dir / 'web' / 'mfconductor_logo.ico',
             )
-            
-            if result.returncode == 0:
-                return web.json_response({
-                    'success': True,
-                    'message': f'Shortcut created at {save_path}',
-                    'path': save_path,
-                    'launcher_path': str(launcher_script)
-                })
-            else:
-                return web.json_response({'success': False, 'message': f'PowerShell error: {result.stderr}'})
+            if dest is None:
+                return web.json_response({'success': False, 'message': err}, status=400)
+            return web.json_response({
+                'success': True,
+                'message': f'Shortcut created at {dest}',
+                'path': str(dest),
+                'launcher_path': str(launcher_script),
+            })
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -1833,24 +1816,18 @@ $Shortcut.Save()
     @routes.get('/mf_conductor/{filename:.*}')
     async def _mnf_serve_static(request):
         filename = request.match_info.get('filename', 'index.html')
-        if not filename or filename == '':
+        if not filename:
             filename = 'index.html'
         
-        web_dir = Path(__file__).parent / 'web'
-        file_path = web_dir / filename
-        
-        # Security check
-        try:
-            file_path = file_path.resolve()
-            if not str(file_path).startswith(str(web_dir.resolve())):
-                return aiohttp_web.Response(status=403, text='Forbidden')
-        except (OSError, ValueError):
-            return aiohttp_web.Response(status=404, text='Not found')
+        web_dir = (Path(__file__).parent / 'web').resolve()
+        file_path = resolve_under(web_dir, *Path(filename).parts)
+        if file_path is None:
+            return aiohttp_web.Response(status=403, text='Forbidden')
         
         if not file_path.exists():
-            # Try index.html for directory requests
-            if (web_dir / filename / 'index.html').exists():
-                file_path = web_dir / filename / 'index.html'
+            index_path = resolve_under(web_dir, *Path(filename).parts, 'index.html') if filename else None
+            if index_path is not None and index_path.exists():
+                file_path = index_path
             else:
                 return aiohttp_web.Response(status=404, text='Not found')
         
@@ -1882,7 +1859,7 @@ $Shortcut.Save()
         """Files browser not available in integrated mode"""
         return web.json_response({
             'success': False,
-            'message': 'File browser is only available in standalone mode. Run Launch_MF_Conductor.bat instead.',
+            'message': 'File browser is only available in standalone mode. Run Launch_MFConductor.bat instead.',
             'files': [],
             'total': 0,
             'total_size': 0
@@ -1928,4 +1905,3 @@ except Exception as e:
 
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']
-

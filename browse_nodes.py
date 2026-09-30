@@ -7,10 +7,17 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Callable, Dict, List, Optional
 from datetime import datetime
 import urllib.request
 import urllib.error
+
+try:
+    from .node_scanner import normalize_name
+    from .security_utils import valid_git_url
+except ImportError:
+    from node_scanner import normalize_name
+    from security_utils import valid_git_url
 
 
 # ComfyUI-Manager custom node list URL
@@ -21,6 +28,13 @@ _available_nodes_cache: Optional[List[Dict]] = None
 _github_stats_cache: Optional[Dict] = None
 _cache_timestamp: Optional[datetime] = None
 CACHE_DURATION_HOURS = 6
+MAX_MISSING_INSTALL = 40
+PACK_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._\-]{1,120}$')
+PACK_ALIASES = {
+    'comfyui-hunyan3dwrapper': 'ComfyUI-Hunyuan3DWrapper',
+    'comfyui-hunyuan3dwrapper': 'ComfyUI-Hunyuan3DWrapper',
+    'image-fitlers': 'ComfyUI-Image-Filters',
+}
 
 
 def _load_github_stats() -> Dict:
@@ -325,6 +339,158 @@ def refresh_node_database() -> bool:
         _load_github_stats()
         return True
     return False
+
+
+def _clean_pack_names(names: Optional[List[str]]) -> List[str]:
+    cleaned = []
+    seen = set()
+    for raw in names or []:
+        name = str(raw or '').strip()
+        if not name or not PACK_NAME_RE.match(name):
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(name)
+        if len(cleaned) >= MAX_MISSING_INSTALL:
+            break
+    return cleaned
+
+
+def _entry_install_url(node: Dict[str, Any]) -> str:
+    files = node.get('files') or []
+    if files and isinstance(files[0], str) and files[0].strip():
+        return files[0].strip()
+    return (node.get('reference') or '').strip()
+
+
+def _entry_folder_name(url: str, fallback: str) -> str:
+    repo = url.rstrip('/').split('/')[-1]
+    if repo.endswith('.git'):
+        repo = repo[:-4]
+    return repo or fallback
+
+
+def resolve_missing_packs(names: Optional[List[str]]) -> Dict[str, Any]:
+    """Map workflow CNR ids to Manager git-clone entries. Exact/unique matches only."""
+    cleaned = _clean_pack_names(names)
+    nodes = get_available_nodes()
+    by_id: Dict[str, Dict[str, Any]] = {}
+    by_repo: Dict[str, Dict[str, Any]] = {}
+    by_norm: Dict[str, List[Dict[str, Any]]] = {}
+    by_compact: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _add_index(index, key, node):
+        if not key:
+            return
+        bucket = index.setdefault(key, [])
+        if node not in bucket:
+            bucket.append(node)
+
+    for node in nodes:
+        nid = (node.get('id') or '').strip().lower()
+        title = node.get('title') or ''
+        url = _entry_install_url(node)
+        repo = _extract_repo_name(url) or _extract_repo_name(node.get('reference') or '') or ''
+        if nid:
+            by_id[nid] = node
+        if repo:
+            by_repo[repo.lower()] = node
+        for raw in (nid, repo, title):
+            _add_index(by_norm, normalize_name(raw), node)
+            _add_index(by_compact, re.sub(r'[^a-z0-9]', '', raw.lower()), node)
+
+    def _unique_hit(hits):
+        refs = []
+        unique = []
+        for hit in hits or []:
+            ref = (hit.get('reference') or _entry_install_url(hit)).lower()
+            if ref in refs:
+                continue
+            refs.append(ref)
+            unique.append(hit)
+        return unique[0] if len(unique) == 1 else None
+
+    installable = []
+    unresolved = []
+    for name in cleaned:
+        key = name.lower()
+        alias = PACK_ALIASES.get(key)
+        node = by_id.get(key) or by_repo.get(key)
+        if node is None and alias:
+            node = by_id.get(alias.lower()) or by_repo.get(alias.lower())
+            if node is None:
+                node = _unique_hit(by_norm.get(normalize_name(alias)))
+            compact_alias = re.sub(r'[^a-z0-9]', '', alias.lower())
+            if node is None and len(compact_alias) >= 8:
+                node = _unique_hit(by_compact.get(compact_alias))
+        if node is None:
+            node = _unique_hit(by_norm.get(normalize_name(name)))
+        compact = re.sub(r'[^a-z0-9]', '', key)
+        if node is None and len(compact) >= 8:
+            node = _unique_hit(by_compact.get(compact))
+        if node is None:
+            unresolved.append({'name': name, 'reason': 'Not in the ComfyUI-Manager list'})
+            continue
+        url = _entry_install_url(node)
+        install_type = node.get('install_type') or 'git-clone'
+        if install_type != 'git-clone' or not valid_git_url(url):
+            unresolved.append({
+                'name': name,
+                'title': node.get('title') or name,
+                'reason': f'Unsupported install type: {install_type}',
+            })
+            continue
+        folder = _entry_folder_name(url, name)
+        installable.append({
+            'name': name,
+            'id': node.get('id') or '',
+            'title': node.get('title') or name,
+            'url': url,
+            'folder': folder,
+        })
+    return {'success': True, 'installable': installable, 'unresolved': unresolved}
+
+
+def install_missing_packs(
+    git,
+    pip,
+    scanner,
+    names: Optional[List[str]],
+    log: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Clone Manager-resolved packs and install their requirements.txt."""
+    resolved = resolve_missing_packs(names)
+    installed = []
+    failed = []
+    for item in resolved['installable']:
+        title = item['title']
+        folder = item['folder']
+        if log:
+            log(f'Installing {title}...')
+        success, message = git.clone_repo(item['url'], folder)
+        already = (not success) and 'already exists' in message.lower()
+        if not success and not already:
+            if log:
+                log(f'Failed {title}: {message}')
+            failed.append({**item, 'success': False, 'message': message})
+            continue
+        if success:
+            req_path = Path(scanner.custom_nodes_path) / folder / 'requirements.txt'
+            if req_path.is_file():
+                pip_ok, pip_msg = pip.install_requirements(str(req_path.parent))
+                if not pip_ok:
+                    message = f'{message} (Warning: {pip_msg})'
+        if log:
+            log(f'Installed {title}' if success else f'Already present {title}')
+        installed.append({**item, 'success': True, 'already': already, 'message': message})
+    return {
+        'success': True,
+        'installed': installed,
+        'failed': failed,
+        'unresolved': resolved['unresolved'],
+    }
 
 
 # Test

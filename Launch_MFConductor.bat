@@ -7,10 +7,8 @@ REM  MF Conductor - Standalone Launcher
 REM  Custom Node Manager for ComfyUI
 REM ============================================================
 
-echo.
-echo  ============================================================
-echo   MF Conductor - Custom Node Manager
-echo  ============================================================
+chcp 65001 >nul
+if exist "%~dp0web\assets\splash.txt" type "%~dp0web\assets\splash.txt"
 echo.
 
 REM Find Python - check for embedded Python first

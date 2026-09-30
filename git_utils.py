@@ -9,6 +9,11 @@ import json
 import re
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
+
+try:
+    from .security_utils import contained_path, safe_node_name, valid_git_url
+except ImportError:
+    from security_utils import contained_path, safe_node_name, valid_git_url
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 import ssl
@@ -81,20 +86,40 @@ class GitUtils:
         except Exception as e:
             return False, str(e)
     
+    def _safe_node_dir(self, folder_name: str, must_exist: bool = True):
+        ok, name = safe_node_name(folder_name)
+        if not ok:
+            return None, name
+        root = self.custom_nodes_path.resolve()
+        for cand in (root / name, root / f"{name}.disabled"):
+            if cand.exists():
+                if not contained_path(cand, root):
+                    return None, 'Invalid path'
+                return cand, name
+        if must_exist:
+            return None, f"Folder not found: {name}"
+        dest = root / name
+        if not contained_path(dest, root):
+            return None, 'Invalid path'
+        return dest, name
+
     def clone_repo(self, url: str, folder_name: Optional[str] = None) -> Tuple[bool, str]:
         """Clone a git repository into custom_nodes"""
-        # Extract folder name from URL if not provided
+        if not valid_git_url(url):
+            return False, "Invalid git URL"
+
         if not folder_name:
             folder_name = url.rstrip('/').split('/')[-1]
             if folder_name.endswith('.git'):
                 folder_name = folder_name[:-4]
         
-        target_path = self.custom_nodes_path / folder_name
+        target_path, name = self._safe_node_dir(folder_name, must_exist=False)
+        if target_path is None:
+            return False, name
+        if target_path.exists() or (target_path.parent / f"{name}.disabled").exists():
+            return False, f"Folder already exists: {name}"
         
-        if target_path.exists():
-            return False, f"Folder already exists: {folder_name}"
-        
-        success, output = self.run_git(['clone', url, str(target_path)])
+        success, output = self.run_git(['clone', '--', url.strip(), str(target_path)])
         
         if success:
             # Check for requirements.txt and offer to install
@@ -104,13 +129,12 @@ class GitUtils:
     
     def pull_updates(self, folder_name: str) -> Tuple[bool, str]:
         """Pull updates for a specific node"""
-        target_path = self.custom_nodes_path / folder_name
-        
-        if not target_path.exists():
-            return False, f"Folder not found: {folder_name}"
+        target_path, name = self._safe_node_dir(folder_name)
+        if target_path is None:
+            return False, name
         
         if not (target_path / '.git').exists():
-            return False, f"Not a git repository: {folder_name}"
+            return False, f"Not a git repository: {name}"
         
         success, output = self.run_git(['pull'], cwd=str(target_path))
         
@@ -123,7 +147,9 @@ class GitUtils:
     
     def get_remote_url(self, folder_name: str) -> Optional[str]:
         """Get remote URL for a node folder"""
-        target_path = self.custom_nodes_path / folder_name
+        target_path, _name = self._safe_node_dir(folder_name)
+        if target_path is None:
+            return None
         
         if not (target_path / '.git').exists():
             return None
@@ -146,7 +172,9 @@ class GitUtils:
     
     def get_current_branch(self, folder_name: str) -> Optional[str]:
         """Get current branch for a node folder"""
-        target_path = self.custom_nodes_path / folder_name
+        target_path, _name = self._safe_node_dir(folder_name)
+        if target_path is None:
+            return None
         
         success, output = self.run_git(
             ['branch', '--show-current'],
@@ -159,7 +187,9 @@ class GitUtils:
     
     def get_commit_info(self, folder_name: str) -> Dict[str, str]:
         """Get latest commit info for a node folder"""
-        target_path = self.custom_nodes_path / folder_name
+        target_path, _name = self._safe_node_dir(folder_name)
+        if target_path is None:
+            return {'hash': '', 'short_hash': '', 'message': '', 'date': '', 'author': ''}
         
         info = {
             'hash': '',
@@ -187,7 +217,9 @@ class GitUtils:
     
     def check_for_updates(self, folder_name: str) -> Tuple[bool, int]:
         """Check if updates are available (returns has_updates, commit_count)"""
-        target_path = self.custom_nodes_path / folder_name
+        target_path, _name = self._safe_node_dir(folder_name)
+        if target_path is None:
+            return False, 0
         
         # Fetch without merging
         self.run_git(['fetch'], cwd=str(target_path))

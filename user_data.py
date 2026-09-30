@@ -8,7 +8,52 @@ import os
 import threading
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Iterable
+
+
+REQUIRED_NODES = {
+    'ComfyUI_MFConductor',
+    'ComfyUI-Manager',
+    'ComfyUI-MediaFrisk',
+    'ComfyUI-ModelFrisk',
+    'ComfyUI-Crystools',
+}
+
+
+def is_required_node_folder(folder_name: str) -> bool:
+    key = str(folder_name or '').removesuffix('.disabled').strip().lower()
+    return key in {name.lower() for name in REQUIRED_NODES}
+
+
+def required_folder_keys() -> set:
+    return {name.lower() for name in REQUIRED_NODES}
+
+
+def merge_required_folders(folders: Iterable[str], all_folders: Optional[Iterable[str]] = None) -> List[str]:
+    """Keep user folders and always append required packs that exist on disk."""
+    merged = []
+    seen = set()
+    for name in folders or []:
+        base = str(name).removesuffix('.disabled').strip()
+        if not base:
+            continue
+        key = base.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(base)
+    known = None
+    if all_folders is not None:
+        known = {str(name).removesuffix('.disabled').lower(): str(name).removesuffix('.disabled') for name in all_folders}
+    for name in REQUIRED_NODES:
+        key = name.lower()
+        if key in seen:
+            continue
+        if known is not None and key not in known:
+            continue
+        seen.add(key)
+        merged.append(known[key] if known else name)
+    return merged
 
 
 class UserDataManager:
@@ -80,7 +125,7 @@ class UserDataManager:
                 "disabled": [],
                 "flags": {
                     "vram": "",  # Default VRAM management
-                    "attention": "--use-sage-attention"
+                    "attention": ""
                 },
                 "custom_flags": "",
                 "custom_flags_list": [],
@@ -96,7 +141,7 @@ class UserDataManager:
                 "disabled": [],
                 "flags": {
                     "vram": "--lowvram",
-                    "attention": "--use-sage-attention"
+                    "attention": ""
                 },
                 "custom_flags": "",
                 "custom_flags_list": [],
@@ -128,7 +173,7 @@ class UserDataManager:
                 "disabled": [],
                 "flags": {
                     "vram": "--highvram",
-                    "attention": "--use-sage-attention"
+                    "attention": ""
                 },
                 "custom_flags": "",
                 "custom_flags_list": [],
@@ -177,7 +222,7 @@ class UserDataManager:
                 "flags": {
                     "vram": "--lowvram",
                     "preview": "--preview-method auto",
-                    "attention": "--use-sage-attention"
+                    "attention": ""
                 },
                 "custom_flags": "",
                 "custom_flags_list": [],
@@ -204,7 +249,7 @@ class UserDataManager:
                 "disabled": [],
                 "flags": {
                     "vram": "",
-                    "attention": "--use-sage-attention"
+                    "attention": ""
                 },
                 "custom_flags": "",
                 "custom_flags_list": [],
@@ -220,7 +265,7 @@ class UserDataManager:
                 "disabled": [],
                 "flags": {
                     "vram": "--lowvram",
-                    "attention": "--use-sage-attention"
+                    "attention": ""
                 },
                 "custom_flags": "",
                 "custom_flags_list": [],
@@ -252,7 +297,7 @@ class UserDataManager:
                 "disabled": [],
                 "flags": {
                     "vram": "--highvram",
-                    "attention": "--use-sage-attention"
+                    "attention": ""
                 },
                 "custom_flags": "",
                 "custom_flags_list": [],
@@ -301,7 +346,7 @@ class UserDataManager:
                 "flags": {
                     "vram": "--lowvram",
                     "preview": "--preview-method auto",
-                    "attention": "--use-sage-attention"
+                    "attention": ""
                 },
                 "custom_flags": "",
                 "custom_flags_list": [],
@@ -431,8 +476,7 @@ class UserDataManager:
         """Get a specific profile"""
         return self._profiles.get(name)
     
-    # Nodes that must always be enabled in profiles
-    REQUIRED_NODES = {'ComfyUI_MFConductor', 'ComfyUI-Manager'}
+    REQUIRED_NODES = REQUIRED_NODES
     
     def save_profile(self, name: str, enabled_nodes: List[str], disabled_nodes: List[str], 
                      flags: Optional[Dict[str, str]] = None, custom_flags: str = '',
@@ -440,11 +484,14 @@ class UserDataManager:
                      excluded_packages: Optional[List[str]] = None,
                      description: str = '', avatar: str = 'default.svg') -> None:
         """Save a profile (list of enabled/disabled nodes with optional flags)"""
-        # Ensure required nodes are always enabled and never disabled
-        enabled_set = set(enabled_nodes)
-        enabled_set.update(self.REQUIRED_NODES)
-        enabled_nodes = list(enabled_set)
-        disabled_nodes = [n for n in disabled_nodes if n not in self.REQUIRED_NODES]
+        required_lower = required_folder_keys()
+        if enabled_nodes:
+            enabled_set = set(enabled_nodes)
+            enabled_set.update(self.REQUIRED_NODES)
+            enabled_nodes = list(enabled_set)
+        else:
+            enabled_nodes = []
+        disabled_nodes = [n for n in disabled_nodes if n.lower() not in required_lower]
         
         existing = self._profiles.get(name, {})
         self._profiles[name] = {

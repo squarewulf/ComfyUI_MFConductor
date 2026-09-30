@@ -13,6 +13,11 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 import threading
 
+try:
+    from .security_utils import read_bounded
+except ImportError:
+    from security_utils import read_bounded
+
 
 class UsageTracker:
     """Tracks custom node and package usage by analyzing workflows"""
@@ -59,7 +64,10 @@ class UsageTracker:
         node_to_pkg = {}
         
         for node_info in installed_nodes:
-            package_name = node_info.get('folder_name', node_info.get('name', 'Unknown'))
+            package_name = (
+                node_info.get('base_folder_name')
+                or str(node_info.get('folder_name', node_info.get('name', 'Unknown'))).removesuffix('.disabled')
+            )
             node_types = node_info.get('provided_nodes') or node_info.get('node_types') or []
             
             for node_type in node_types:
@@ -95,14 +103,20 @@ class UsageTracker:
         self._scan_progress = {'current': 0, 'total': 0, 'status': 'starting'}
         
         try:
+            try:
+                from .security_utils import ALLOWED_USAGE_FOLDERS, resolve_under
+            except ImportError:
+                from security_utils import ALLOWED_USAGE_FOLDERS, resolve_under
+
             if folders is None:
                 folders = ['output', 'input', 'user']
             
-            # Collect all files to scan
             files_to_scan = []
             for folder_name in folders:
-                folder_path = self.comfy_root / folder_name
-                if folder_path.exists():
+                if folder_name not in ALLOWED_USAGE_FOLDERS:
+                    continue
+                folder_path = resolve_under(self.comfy_root, folder_name)
+                if folder_path is not None and folder_path.exists():
                     # PNG and WebP files (may contain workflow metadata)
                     files_to_scan.extend(folder_path.rglob('*.png'))
                     files_to_scan.extend(folder_path.rglob('*.webp'))
@@ -201,8 +215,10 @@ class UsageTracker:
                     chunk_type = chunk_header[4:8]
                     
                     if chunk_type == b'tEXt':
-                        data = f.read(length)
+                        data = read_bounded(f, length)
                         f.read(4)  # CRC
+                        if not data:
+                            continue
                         
                         null_idx = data.find(b'\x00')
                         if null_idx > 0:
@@ -216,8 +232,10 @@ class UsageTracker:
                                     pass
                     
                     elif chunk_type == b'iTXt':
-                        data = f.read(length)
+                        data = read_bounded(f, length)
                         f.read(4)  # CRC
+                        if not data:
+                            continue
                         
                         null_idx = data.find(b'\x00')
                         if null_idx > 0:

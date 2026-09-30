@@ -8,13 +8,24 @@ import sys
 import json
 import subprocess
 import struct
+import hashlib
+import base64
+import socket
+import select
 import webbrowser
 import time
+from functools import wraps
 from pathlib import Path
 from datetime import datetime
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs, unquote
 import threading
+import mimetypes
+
+mimetypes.add_type('font/woff2', '.woff2')
+mimetypes.add_type('font/ttf', '.ttf')
+mimetypes.add_type('font/woff', '.woff')
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -22,12 +33,51 @@ sys.path.insert(0, str(Path(__file__).parent))
 from node_scanner import NodeScanner, get_node_requirements, refresh_installed_packages, clear_manager_db_cache, CACHE_VERSION
 from git_utils import GitUtils, PipUtils
 from user_data import get_user_data
-from browse_nodes import browse_nodes, get_categories, refresh_node_database, get_node_details
+from browse_nodes import (
+    browse_nodes,
+    get_categories,
+    get_node_details,
+    install_missing_packs,
+    refresh_node_database,
+    resolve_missing_packs,
+)
 from usage_tracker import get_usage_tracker
+from workflow_analyzer import (
+    apply_enabled_folders,
+    folders_for_profile,
+    folders_for_workflow_launch,
+    get_workflow_analyzer,
+    is_never_block_package,
+    normalize_workflow_paths,
+    persist_pending_workflow,
+)
+from security_utils import (
+    ALLOWED_FILE_FOLDERS,
+    ALLOWED_PIP_SUBCOMMANDS,
+    escape_ps_string,
+    find_comfy_python,
+    is_local_api_request,
+    read_bounded,
+    resolve_under,
+    valid_git_url,
+    valid_pip_package,
+    valid_pip_version,
+)
+from profile_launch import build_profile_args, parse_launch_flags, validate_launch_args, persist_blocked_packages, workflow_launch_options, write_desktop_shortcut, write_profile_launcher
+
+
+def _process_action(method):
+    @wraps(method)
+    def serialized(self, *args, **kwargs):
+        with self._process_lock:
+            return method(self, *args, **kwargs)
+    return serialized
 
 
 class MFConductorAPI:
     """API handler for MF Conductor operations"""
+    
+    PIP_CACHE_TTL = 120  # seconds before pip list cache expires
     
     def __init__(self, custom_nodes_path: str = None):
         self.scanner = NodeScanner(custom_nodes_path)
@@ -42,10 +92,16 @@ class MFConductorAPI:
         
         # ComfyUI process management
         self.comfy_process = None
+        self._process_lock = threading.RLock()
         self.comfy_output_buffer = []
         self.comfy_output_index = 0
         self.output_lock = threading.Lock()
         self.active_profile_name = None
+        self.last_enabled_override = None
+        self.last_blocked_override = None
+        self.last_flags_override = None
+        self.last_extra_flags = []
+        self.backend_log_base = 0
         
         # Backend log buffer for frontend console
         self.backend_logs = []
@@ -55,6 +111,39 @@ class MFConductorAPI:
         
         # Console output buffer limits
         self.max_comfy_output = 5000
+        
+        # Pip list cache
+        self._pip_cache = None
+        self._pip_cache_time = 0
+        self._pip_cache_lock = threading.Lock()
+        
+        # WebSocket clients for push notifications
+        self._ws_clients = set()
+        self._ws_clients_lock = threading.Lock()
+    
+    def ws_register(self, client_socket):
+        """Register a WebSocket client for push notifications"""
+        with self._ws_clients_lock:
+            self._ws_clients.add(client_socket)
+    
+    def ws_unregister(self, client_socket):
+        """Unregister a WebSocket client"""
+        with self._ws_clients_lock:
+            self._ws_clients.discard(client_socket)
+    
+    def ws_broadcast(self, event_type: str, data: dict = None):
+        """Push a message to all connected WebSocket clients"""
+        message = json.dumps({'type': event_type, 'data': data or {}, 'timestamp': time.time()})
+        frame = _ws_encode_frame(message)
+        dead = []
+        with self._ws_clients_lock:
+            for sock in self._ws_clients:
+                try:
+                    sock.sendall(frame)
+                except Exception:
+                    dead.append(sock)
+            for sock in dead:
+                self._ws_clients.discard(sock)
 
     def _extract_png_workflow_prompt_pil(self, file_path: Path):
         """Best-effort extraction of workflow/prompt strings from PNG via Pillow (img.text/img.info)."""
@@ -216,17 +305,19 @@ class MFConductorAPI:
                 'type': log_type,
                 'time': time.time()
             })
-            # Keep only last N logs
             if len(self.backend_logs) > self.max_backend_logs:
-                self.backend_logs.pop(0)
+                overflow = len(self.backend_logs) - self.max_backend_logs
+                del self.backend_logs[:overflow]
+                self.backend_log_base += overflow
     
     def get_backend_logs(self, since_index: int = 0) -> list:
-        """Get backend logs since the given index"""
+        """Get backend logs since the given absolute index"""
         with self.backend_log_lock:
-            return list(self.backend_logs[since_index:])  # Return copy to avoid race condition
+            start = max(0, int(since_index) - self.backend_log_base)
+            return list(self.backend_logs[start:])
     
     def get_nodes(self, refresh: bool = False, fast: bool = False) -> dict:
-        """Get list of all custom nodes"""
+        """Get list of all custom nodes. With fast=True, never blocks."""
         if not refresh and fast:
             cache = self.scanner.get_cached_nodes(allow_stale=True)
             if cache and cache.get('nodes') is not None:
@@ -235,7 +326,7 @@ class MFConductorAPI:
                 self._cached_nodes = cache.get('nodes', [])
                 self._cache_time = cache.get('scanned_at')
                 if stale:
-                    threading.Thread(target=self.scanner.refresh, daemon=True).start()
+                    self._start_background_scan()
                 return {
                     'nodes': self._cached_nodes,
                     'scanned_at': self._cache_time,
@@ -243,9 +334,73 @@ class MFConductorAPI:
                     'cache_used': True,
                     'cache_stale': stale
                 }
+            
+            if self._cached_nodes is not None:
+                return {
+                    'nodes': self._cached_nodes,
+                    'scanned_at': self._cache_time,
+                    'total': len(self._cached_nodes),
+                    'cache_used': True
+                }
+            
+            # No cache at all — return folder names as lightweight placeholders
+            # and start a full scan in the background
+            self._start_background_scan()
+            placeholder_nodes = []
+            skip_items = {'__pycache__', '.git', 'example_node.py.example'}
+            for item in self.scanner.custom_nodes_path.iterdir():
+                if not item.is_dir():
+                    continue
+                folder_name = item.name
+                if folder_name in skip_items or folder_name.startswith('.'):
+                    continue
+                
+                if folder_name.endswith('.disabled'):
+                    is_disabled = True
+                    base_name = folder_name[:-9]
+                else:
+                    is_disabled = False
+                    base_name = folder_name
+                
+                placeholder_nodes.append({
+                    'folder_name': folder_name,
+                    'display_name': base_name,
+                    'base_folder_name': base_name,
+                    'author': 'Scanning...',
+                    'description': '',
+                    'git_url': None,
+                    'stars': 0,
+                    'enabled': not is_disabled,
+                    'is_disabled': is_disabled,
+                    'is_git_repo': False,
+                    'has_requirements': False,
+                    'provided_nodes': [],
+                    'node_count': 0,
+                    'date_added': None,
+                    'last_updated': None,
+                    'folder_path': str(item),
+                })
+            return {
+                'nodes': placeholder_nodes,
+                'scanned_at': None,
+                'total': len(placeholder_nodes),
+                'scanning': True
+            }
         
         if refresh or self._cached_nodes is None:
             nodes = self.scanner.scan(use_cache=not refresh)
+            
+            # Safeguard: if cache returned suspiciously few nodes, force fresh scan
+            # Most installations have at least 5+ nodes (including MFConductor, Manager, etc.)
+            if not refresh and len(nodes) < 5:
+                # Count actual directories to compare
+                actual_dirs = sum(1 for item in self.scanner.custom_nodes_path.iterdir() 
+                                  if item.is_dir() and not item.name.startswith('.') 
+                                  and item.name not in {'__pycache__', '.git'})
+                if actual_dirs > len(nodes) + 5:
+                    # Cache is likely corrupted, force fresh scan
+                    nodes = self.scanner.scan(use_cache=False)
+            
             self._cached_nodes = nodes
             self._cache_time = datetime.now().isoformat()
         
@@ -255,11 +410,38 @@ class MFConductorAPI:
             'total': len(self._cached_nodes)
         }
     
+    def _start_background_scan(self):
+        """Start a background node scan if one isn't already running"""
+        if getattr(self, '_scan_running', False):
+            return
+        self._scan_running = True
+        self.ws_broadcast('scan_started')
+        self.add_backend_log("Background node scan started...", 'info')
+        
+        def _do_scan():
+            try:
+                nodes = self.scanner.scan(use_cache=False)
+                self._cached_nodes = nodes
+                self._cache_time = datetime.now().isoformat()
+                self.add_backend_log(f"Scan complete: {len(nodes)} nodes found", 'success')
+                self.ws_broadcast('scan_complete', {'total': len(nodes)})
+            except Exception as e:
+                self.add_backend_log(f"Scan failed: {e}", 'error')
+            finally:
+                self._scan_running = False
+        
+        threading.Thread(target=_do_scan, daemon=True).start()
+    
     def refresh_nodes(self) -> dict:
         """Force refresh the node list"""
-        # Clear all caches to force fresh scan
         clear_manager_db_cache()
-        return self.get_nodes(refresh=True)
+        self._start_background_scan()
+        return {
+            'nodes': self._cached_nodes or [],
+            'scanned_at': self._cache_time,
+            'total': len(self._cached_nodes or []),
+            'scanning': True
+        }
     
     def get_node(self, folder_name: str) -> dict:
         """Get details for a specific node"""
@@ -279,10 +461,13 @@ class MFConductorAPI:
     
     def install_node(self, url: str, folder_name: str = None, install_deps: bool = True) -> dict:
         """Clone a new node from git"""
-        # Clone the repository
+        if not valid_git_url(url):
+            return {'success': False, 'message': 'Invalid git URL'}
+        self.ws_broadcast('node_operation', {'action': 'installing', 'url': url})
         success, message = self.git.clone_repo(url, folder_name)
         
         if not success:
+            self.ws_broadcast('node_operation', {'action': 'install_failed', 'url': url})
             return {'success': False, 'message': message}
         
         # Determine the actual folder name
@@ -301,17 +486,17 @@ class MFConductorAPI:
                 if not pip_success:
                     message += f" (Warning: {pip_msg})"
         
-        # Refresh the cache
         self.refresh_nodes()
+        self.invalidate_pip_cache()
+        self.ws_broadcast('node_installed', {'folder_name': folder_name})
         
         return {'success': True, 'message': message, 'folder_name': folder_name}
     
     def open_folder(self, folder_name: str) -> dict:
         """Open the node folder in file explorer"""
-        folder_path = self.custom_nodes_path / folder_name
-        
-        if not folder_path.exists():
-            return {'success': False, 'message': 'Folder not found'}
+        folder_path, err = self.scanner._safe_node_path(folder_name)
+        if folder_path is None:
+            return {'success': False, 'message': err}
         
         try:
             if sys.platform == 'win32':
@@ -330,6 +515,7 @@ class MFConductorAPI:
         success, message = self.scanner.remove_node(folder_name)
         if success:
             self._cached_nodes = None
+            self.ws_broadcast('node_removed', {'folder_name': folder_name})
         return {'success': success, 'message': message}
     
     def deactivate_node(self, folder_name: str) -> dict:
@@ -337,6 +523,7 @@ class MFConductorAPI:
         success, message = self.scanner.deactivate_node(folder_name)
         if success:
             self._cached_nodes = None
+            self.ws_broadcast('node_deactivated', {'folder_name': folder_name})
         return {'success': success, 'message': message}
     
     def activate_node(self, folder_name: str) -> dict:
@@ -344,14 +531,14 @@ class MFConductorAPI:
         success, message = self.scanner.activate_node(folder_name)
         if success:
             self._cached_nodes = None
+            self.ws_broadcast('node_activated', {'folder_name': folder_name})
         return {'success': success, 'message': message}
     
     def get_requirements(self, folder_name: str) -> dict:
         """Get requirements for a specific node"""
-        folder_path = self.custom_nodes_path / folder_name
-        
-        if not folder_path.exists():
-            return {'success': False, 'message': 'Folder not found', 'requirements': []}
+        folder_path, err = self.scanner._safe_node_path(folder_name)
+        if folder_path is None:
+            return {'success': False, 'message': err, 'requirements': []}
         
         requirements = get_node_requirements(folder_path)
         return {
@@ -365,18 +552,21 @@ class MFConductorAPI:
     
     def install_package(self, package_name: str) -> dict:
         """Install a specific package"""
+        if not valid_pip_package(package_name):
+            return {'success': False, 'message': 'Invalid package name'}
         try:
             result = subprocess.run(
-                [self.pip.python_path, '-m', 'pip', 'install', package_name],
+                [self.pip.python_path, '-m', 'pip', 'install', package_name.strip()],
                 capture_output=True,
                 text=True,
                 timeout=300
             )
             
-            # Refresh the package cache
             refresh_installed_packages()
+            self.invalidate_pip_cache()
             
             if result.returncode == 0:
+                self.ws_broadcast('package_installed', {'package': package_name})
                 return {'success': True, 'message': f'Successfully installed {package_name}'}
             else:
                 return {'success': False, 'message': f'Installation failed: {result.stderr}'}
@@ -451,45 +641,10 @@ class MFConductorAPI:
         return {'success': True, 'message': f'Profile "{name}" saved'}
     
     def launch_profile(self, name: str) -> dict:
-        """Launch a profile by creating and running its batch file"""
-        import subprocess
-        user_data = get_user_data()
-        profile = user_data.get_profile(name)
-        if not profile:
+        """Launch ComfyUI with a profile's folders, flags, and excluded packages."""
+        if not get_user_data().get_profile(name):
             return {'success': False, 'message': 'Profile not found'}
-        
-        # Create batch file for this profile
-        profiles_dir = Path(__file__).parent / 'profiles'
-        profiles_dir.mkdir(exist_ok=True)
-        bat_path = profiles_dir / f'{name}.bat'
-        
-        # Build command line flags using the shared helper
-        flags = self._build_comfy_args_from_profile(profile)
-        flags_str = ' '.join(flags)
-        
-        # Find ComfyUI run script
-        comfy_root = Path(__file__).parent.parent.parent
-        run_script = comfy_root.parent / 'run_nvidia_gpu.bat'
-        if not run_script.exists():
-            run_script = comfy_root / 'main.py'
-        
-        # Create batch file content
-        if run_script.suffix == '.bat':
-            bat_content = f'@echo off\ncd /d "{comfy_root.parent}"\ncall "{run_script}" {flags_str}\n'
-        else:
-            python_path = comfy_root.parent / 'python_embeded' / 'python.exe'
-            if not python_path.exists():
-                import sys
-                python_path = sys.executable
-            bat_content = f'@echo off\ncd /d "{comfy_root}"\n"{python_path}" "{run_script}" {flags_str}\n'
-        
-        with open(bat_path, 'w') as f:
-            f.write(bat_content)
-        
-        # Launch the batch file
-        subprocess.Popen(['cmd', '/c', str(bat_path)], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
-        
-        return {'success': True, 'message': f'Launching profile {name}...'}
+        return self.launch_comfy(profile_name=name)
     
     def set_default_profile(self, name: str) -> dict:
         """Set a profile as the default"""
@@ -537,45 +692,173 @@ class MFConductorAPI:
         if not profile:
             return {'success': False, 'message': 'Profile not found'}
         
-        results = {'enabled': [], 'disabled': [], 'errors': []}
-        
-        enabled_list = profile.get('enabled', [])
-        disabled_list = profile.get('disabled', [])
-        
-        # Get all node folders (fast - no full scan needed)
+        # Normalize names: strip .disabled suffix so comparisons work
+        # regardless of whether the profile was saved while nodes were active or disabled
         all_folders = self.scanner.list_folder_names()
-        
-        # If enabled list is empty, treat as "all nodes enabled"
-        # Otherwise, only enable nodes in the list and disable the rest
-        if not enabled_list and not disabled_list:
-            # Empty lists = use all nodes (enable everything)
-            for folder in all_folders:
-                success, msg = self.scanner.activate_node(folder)
-                if success:
-                    results['enabled'].append(folder)
-                # Don't log errors for already-enabled nodes
-        else:
-            # Specific selection - enable only selected, disable others
-            enabled_set = set(enabled_list) if enabled_list else set(all_folders)
-            
-            for folder in all_folders:
-                if folder in enabled_set:
-                    success, msg = self.scanner.activate_node(folder)
-                    if success:
-                        results['enabled'].append(folder)
-                    # Ignore "not found" and "already" messages - these are normal
-                    elif 'already' not in msg.lower() and 'not found' not in msg.lower():
-                        results['errors'].append(f"{folder}: {msg}")
-                else:
-                    success, msg = self.scanner.deactivate_node(folder)
-                    if success:
-                        results['disabled'].append(folder)
-                    # Ignore "not found" and "already" messages - these are normal
-                    elif 'already' not in msg.lower() and 'not found' not in msg.lower():
-                        results['errors'].append(f"{folder}: {msg}")
-        
+        results = apply_enabled_folders(self.scanner, folders_for_profile(profile, all_folders))
         self._cached_nodes = None
+        if results['errors']:
+            return {'success': False, 'message': '; '.join(results['errors']), 'results': results}
+        persist_blocked_packages(profile.get('excluded_packages') or [])
         return {'success': True, 'results': results}
+
+    def apply_enabled_folders(self, enabled_folders) -> dict:
+        results = apply_enabled_folders(self.scanner, enabled_folders)
+        self._cached_nodes = None
+        if results['errors']:
+            return {'success': False, 'message': '; '.join(results['errors']), 'results': results}
+        return {'success': True, 'results': results}
+
+    def persist_default_profile_blocks(self):
+        for profile in get_user_data().get_profiles().values():
+            if profile.get('is_default'):
+                persist_blocked_packages(profile.get('excluded_packages') or [])
+                return
+        persist_blocked_packages([])
+
+    def _installed_nodes_for_map(self, allow_scan: bool = False) -> list:
+        if self._cached_nodes:
+            return self._cached_nodes
+        cached = self.scanner.get_cached_nodes(allow_stale=True)
+        if cached and cached.get('nodes'):
+            self._cached_nodes = cached['nodes']
+            return self._cached_nodes
+        if not allow_scan:
+            return []
+        cache = self.scanner.scan(use_cache=True)
+        self._cached_nodes = cache or []
+        return self._cached_nodes
+
+    def list_workflows(self) -> dict:
+        analyzer = get_workflow_analyzer(self.comfy_root, self.scanner)
+        return analyzer.list_workflows(self._installed_nodes_for_map(allow_scan=False))
+
+    def analyze_workflow(self, rel_path: str, include_packages: bool = False) -> dict:
+        analyzer = get_workflow_analyzer(self.comfy_root, self.scanner)
+        return analyzer.analyze(
+            rel_path,
+            self._installed_nodes_for_map(allow_scan=True),
+            include_packages=include_packages,
+        )
+
+    def _append_comfy_log(self, text: str, line_type: str = 'info') -> None:
+        with self.output_lock:
+            self.comfy_output_buffer.append({'text': text, 'type': line_type})
+
+    def _warn_broken_native_packs(self, enabled_folders) -> None:
+        names = {str(name).lower() for name in (enabled_folders or [])}
+        if 'comfyui-trellis2' not in names:
+            return
+        try:
+            import importlib
+            importlib.import_module('cumesh')
+            return
+        except Exception as exc:
+            torch_ver = 'unknown'
+            try:
+                import torch
+                torch_ver = f'{torch.__version__} cu{torch.version.cuda}'
+            except Exception:
+                pass
+            self._append_comfy_log(
+                f'Trellis2 is enabled but cumesh failed to import ({exc}). '
+                f'Your torch is {torch_ver}. visualbruno has no Windows wheel for this build, '
+                'so ComfyUI will list the Trellis2 node types as missing.',
+                'error',
+            )
+
+    def _isolation_for_workflows(self, rel_path=None, rel_paths=None, extra_nodes=()):
+        paths = normalize_workflow_paths(rel_path, rel_paths)
+        if not paths:
+            return None, {'success': False, 'message': 'Workflow path is required'}
+        self._append_comfy_log(f'Analyzing isolation for {len(paths)} workflow{"s" if len(paths) != 1 else ""}...')
+        analyzer = get_workflow_analyzer(self.comfy_root, self.scanner)
+        batch = analyzer.analyze_many(paths, self._installed_nodes_for_map(allow_scan=False), include_packages=False)
+        if not batch.get('success'):
+            return None, batch
+        required = []
+        names = []
+        missing = []
+        last = None
+        for analysis in batch.get('analyses') or []:
+            last = analysis
+            names.append(analysis.get('name') or analysis.get('path') or '')
+            required.extend(analysis.get('required_folders') or [])
+            missing.extend(analysis.get('missing_folders') or [])
+        missing = sorted({str(name) for name in missing if name}, key=str.lower)
+        if missing:
+            self._append_comfy_log(
+                'Continuing without missing packs: ' + ', '.join(missing),
+                'warning',
+            )
+        enabled = folders_for_workflow_launch({'required_folders': required}, self.scanner.list_folder_names(), extra_nodes)
+        return {
+            'paths': paths,
+            'names': names,
+            'enabled': enabled,
+            'analysis': last,
+            'missing_folders': missing,
+        }, None
+
+    def launch_workflow(self, rel_path: str = None, profile_name: str = None, rel_paths=None,
+                        launch_flags=None, extra_nodes=()) -> dict:
+        try:
+            flags = parse_launch_flags(launch_flags) if launch_flags is not None else None
+            prepared, error = self._isolation_for_workflows(rel_path, rel_paths, extra_nodes)
+            if error:
+                return error
+            with self.output_lock:
+                self.comfy_output_buffer = []
+                self.comfy_output_index = 0
+        except ValueError as exc:
+            return {'success': False, 'message': str(exc)}
+        if error:
+            return error
+        self._append_comfy_log(
+            f'Isolation plan ready: {len(prepared["enabled"])} pack{"s" if len(prepared["enabled"]) != 1 else ""}'
+        )
+        self._warn_broken_native_packs(prepared['enabled'])
+
+        blocked = []
+        if profile_name is None:
+            for name, profile in get_user_data().get_profiles().items():
+                if profile.get('is_default'):
+                    profile_name = name
+                    break
+
+        if profile_name:
+            profile = get_user_data().get_profile(profile_name)
+            if profile:
+                blocked = list(profile.get('excluded_packages') or [])
+
+        names = prepared['names']
+        label = f'workflow "{names[0]}"' if len(names) == 1 else f'{len(names)} workflows'
+        result = self.launch_comfy(
+            profile_name=profile_name,
+            enabled_override=prepared['enabled'],
+            blocked_override=blocked,
+            launch_label=label,
+            reset_output=False,
+            restart_if_running=True,
+            flags_override=flags,
+        )
+        if result.get('success'):
+            persist_pending_workflow(prepared['paths'][0], prepared['paths'])
+        return result
+
+    def resolve_missing_workflow_packs(self, names) -> dict:
+        return resolve_missing_packs(names)
+
+    def install_missing_workflow_packs(self, names) -> dict:
+        def _log(text):
+            self._append_comfy_log(text, 'info')
+            self.add_backend_log(text, 'info')
+
+        result = install_missing_packs(self.git, self.pip, self.scanner, names, log=_log)
+        self._cached_nodes = None
+        get_workflow_analyzer(self.comfy_root, self.scanner).reset_maps()
+        self.refresh_nodes()
+        return result
     
     # ==================== BACKUP/RESTORE ====================
     
@@ -697,14 +980,47 @@ class MFConductorAPI:
     
     # ==================== PACKAGES ====================
     
-    def get_packages(self) -> dict:
-        """Get list of installed Python packages"""
-        import subprocess
+    def invalidate_pip_cache(self):
+        """Clear the pip list cache so the next call fetches fresh data"""
+        with self._pip_cache_lock:
+            self._pip_cache = None
+            self._pip_cache_time = 0
+    
+    def _get_packages_fast(self) -> list:
+        """Get installed packages using importlib.metadata (no subprocess, instant)"""
+        import importlib.metadata
+        packages = []
         try:
-            # Use python -m pip to list packages
+            for dist in importlib.metadata.distributions():
+                name = dist.metadata.get('Name')
+                version = dist.metadata.get('Version', '')
+                if name:
+                    packages.append({'name': name, 'version': version, 'location': ''})
+        except Exception:
+            pass
+        packages.sort(key=lambda p: p['name'].lower())
+        return packages
+    
+    def get_packages(self, refresh: bool = False) -> dict:
+        """Get list of installed Python packages (cached with TTL)"""
+        with self._pip_cache_lock:
+            now = time.time()
+            if not refresh and self._pip_cache is not None and (now - self._pip_cache_time) < self.PIP_CACHE_TTL:
+                return {'success': True, 'packages': self._pip_cache, 'cached': True}
+        
+        # Fast path: use importlib.metadata (instant, no subprocess)
+        packages = self._get_packages_fast()
+        if packages:
+            with self._pip_cache_lock:
+                self._pip_cache = packages
+                self._pip_cache_time = time.time()
+            return {'success': True, 'packages': packages}
+        
+        # Fallback: pip subprocess
+        try:
             python_path = self.pip.python_path if self.pip else 'python'
             result = subprocess.run(
-                [python_path, '-m', 'pip', 'list', '--format=json'],
+                [python_path, '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'],
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -712,9 +1028,11 @@ class MFConductorAPI:
             
             if result.returncode == 0:
                 packages = json.loads(result.stdout)
-                # Add location info
                 for pkg in packages:
-                    pkg['location'] = ''  # pip list --format=json doesn't include location
+                    pkg['location'] = ''
+                with self._pip_cache_lock:
+                    self._pip_cache = packages
+                    self._pip_cache_time = time.time()
                 return {'success': True, 'packages': packages}
             else:
                 return {'success': False, 'message': result.stderr or 'Failed to list packages'}
@@ -725,26 +1043,15 @@ class MFConductorAPI:
     
     def check_package_updates(self) -> dict:
         """Check which packages have updates available - FAST version using PyPI API"""
-        import subprocess
         import urllib.request
-        import threading
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
         try:
-            python_path = self.pip.python_path if self.pip else 'python'
-            
-            # Step 1: Get list of installed packages (FAST - just reads local metadata)
-            result = subprocess.run(
-                [python_path, '-m', 'pip', 'list', '--format=json'],
-                capture_output=True,
-                text=True,
-                timeout=10  # Should be very fast
-            )
-            
-            if result.returncode != 0:
+            pkg_result = self.get_packages()
+            if not pkg_result.get('success'):
                 return {'success': False, 'message': 'Failed to get installed packages list'}
             
-            installed_packages = json.loads(result.stdout) if result.stdout.strip() else []
+            installed_packages = pkg_result.get('packages', [])
             if not installed_packages:
                 return {'success': True, 'updates': []}
             
@@ -919,18 +1226,21 @@ class MFConductorAPI:
     
     def uninstall_package(self, package_name: str) -> dict:
         """Uninstall a specific package"""
+        if not valid_pip_package(package_name):
+            return {'success': False, 'message': 'Invalid package name'}
         try:
             result = subprocess.run(
-                [self.pip.python_path, '-m', 'pip', 'uninstall', '-y', package_name],
+                [self.pip.python_path, '-m', 'pip', 'uninstall', '-y', package_name.strip()],
                 capture_output=True,
                 text=True,
                 timeout=120
             )
             
-            # Refresh the package cache
             refresh_installed_packages()
+            self.invalidate_pip_cache()
             
             if result.returncode == 0:
+                self.ws_broadcast('package_uninstalled', {'package': package_name})
                 return {'success': True, 'message': f'Successfully uninstalled {package_name}'}
             else:
                 return {'success': False, 'message': f'Uninstall failed: {result.stderr}'}
@@ -941,11 +1251,13 @@ class MFConductorAPI:
     
     def upgrade_package(self, package_name: str, version: str = None) -> dict:
         """Upgrade a specific package to a specific version or latest"""
+        if not valid_pip_package(package_name) or not valid_pip_version(version or ''):
+            return {'success': False, 'message': 'Invalid package name or version'}
         try:
             if version:
-                package_spec = f'{package_name}=={version}'
+                package_spec = f'{package_name.strip()}=={version.strip()}'
             else:
-                package_spec = package_name
+                package_spec = package_name.strip()
             
             result = subprocess.run(
                 [self.pip.python_path, '-m', 'pip', 'install', '--upgrade', package_spec],
@@ -954,11 +1266,12 @@ class MFConductorAPI:
                 timeout=300
             )
             
-            # Refresh the package cache
             refresh_installed_packages()
+            self.invalidate_pip_cache()
             
             if result.returncode == 0:
                 version_msg = f' to {version}' if version else ''
+                self.ws_broadcast('package_upgraded', {'package': package_name})
                 return {'success': True, 'message': f'Successfully upgraded {package_name}{version_msg}'}
             else:
                 return {'success': False, 'message': f'Upgrade failed: {result.stderr}'}
@@ -975,14 +1288,15 @@ class MFConductorAPI:
         module_dir = Path(__file__).parent
         comfy_root = (module_dir / '../..').resolve()
         
+        if folder_type not in ALLOWED_FILE_FOLDERS or folder_type == 'both':
+            folder_type = 'output'
         folder_map = {
             'output': comfy_root / 'output',
             'input': comfy_root / 'input',
-            'models': comfy_root / 'models',
             'temp': comfy_root / 'temp',
         }
         
-        return folder_map.get(folder_type, comfy_root / 'output')
+        return folder_map[folder_type]
     
     def get_files(self, folder_type: str = 'output', subfolder: str = '', 
                   sort_by: str = 'date', sort_dir: str = 'desc',
@@ -1028,9 +1342,12 @@ class MFConductorAPI:
                 }
             
             folder_path = self.get_comfy_folder_path(folder_type)
+            base_path = folder_path
             
             if subfolder and not recursive:
-                folder_path = folder_path / subfolder
+                folder_path = resolve_under(base_path, subfolder)
+                if folder_path is None:
+                    return {'success': False, 'message': 'Invalid path'}
             
             if not folder_path.exists():
                 return {
@@ -1192,7 +1509,7 @@ class MFConductorAPI:
                         chunk_type = chunk_type_bytes.decode('ascii', errors='ignore')
                         
                         if chunk_type == 'tEXt':
-                            data = f.read(length)
+                            data = read_bounded(f, length) or b''
                             if b'\x00' in data:
                                 keyword, text = data.split(b'\x00', 1)
                                 keyword = keyword.decode('latin-1', errors='ignore').strip().lower()
@@ -1202,7 +1519,7 @@ class MFConductorAPI:
                                     prompt_data = text.decode('utf-8', errors='ignore')
                         
                         elif chunk_type == 'zTXt':
-                            data = f.read(length)
+                            data = read_bounded(f, length) or b''
                             try:
                                 null_idx = data.index(b'\x00')
                                 keyword = data[:null_idx].decode('latin-1', errors='ignore').strip().lower()
@@ -1218,7 +1535,7 @@ class MFConductorAPI:
                                 pass
                         
                         elif chunk_type == 'iTXt':
-                            data = f.read(length)
+                            data = read_bounded(f, length) or b''
                             try:
                                 null_idx = data.index(b'\x00')
                                 keyword = data[:null_idx].decode('utf-8', errors='ignore').strip().lower()
@@ -1248,7 +1565,7 @@ class MFConductorAPI:
                         elif chunk_type == 'IEND':
                             break
                         else:
-                            f.read(length)
+                            read_bounded(f, length)
                         
                         f.read(4)  # CRC
             except Exception:
@@ -1433,7 +1750,7 @@ class MFConductorAPI:
                     chunk_type = f.read(4).decode('ascii', errors='ignore')
                     
                     if chunk_type == 'tEXt':
-                        data = f.read(length)
+                        data = read_bounded(f, length) or b''
                         if b'\x00' in data:
                             keyword, text = data.split(b'\x00', 1)
                             keyword = keyword.decode('latin-1', errors='ignore').strip().lower()
@@ -1443,7 +1760,7 @@ class MFConductorAPI:
                                 prompt_data = text.decode('utf-8', errors='ignore')
                     
                     elif chunk_type == 'zTXt':
-                        data = f.read(length)
+                        data = read_bounded(f, length) or b''
                         try:
                             null_idx = data.index(b'\x00')
                             keyword = data[:null_idx].decode('latin-1', errors='ignore').strip().lower()
@@ -1461,7 +1778,7 @@ class MFConductorAPI:
                             pass
                     
                     elif chunk_type == 'iTXt':
-                        data = f.read(length)
+                        data = read_bounded(f, length) or b''
                         try:
                             null_idx = data.index(b'\x00')
                             keyword = data[:null_idx].decode('utf-8', errors='ignore').strip().lower()
@@ -1496,7 +1813,7 @@ class MFConductorAPI:
                             f.seek(length, 1)
                         except Exception:
                             # Fallback for non-seekable streams (shouldn't happen for files)
-                            f.read(length)
+                            read_bounded(f, length)
                     
                     f.read(4)  # CRC
             
@@ -1659,11 +1976,8 @@ class MFConductorAPI:
             if not full_path.exists():
                 return {'success': False, 'message': 'File not found'}
             
-            # Security check - ensure path is within the folder
-            try:
-                full_path.relative_to(self.get_comfy_folder_path(folder_type))
-            except ValueError:
-                return {'success': False, 'message': 'Invalid path'}
+            if full_path == self.get_comfy_folder_path(folder_type).resolve():
+                return {'success': False, 'message': 'Cannot delete the folder root'}
             
             if full_path.is_dir():
                 import shutil
@@ -1708,18 +2022,21 @@ class MFConductorAPI:
     
     def reinstall_package(self, package_name: str) -> dict:
         """Force reinstall a specific package"""
+        if not valid_pip_package(package_name):
+            return {'success': False, 'message': 'Invalid package name'}
         try:
             result = subprocess.run(
-                [self.pip.python_path, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', package_name],
+                [self.pip.python_path, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', package_name.strip()],
                 capture_output=True,
                 text=True,
                 timeout=300
             )
             
-            # Refresh the package cache
             refresh_installed_packages()
+            self.invalidate_pip_cache()
             
             if result.returncode == 0:
+                self.ws_broadcast('package_reinstalled', {'package': package_name})
                 return {'success': True, 'message': f'Successfully reinstalled {package_name}'}
             else:
                 return {'success': False, 'message': f'Reinstall failed: {result.stderr}'}
@@ -1747,18 +2064,17 @@ class MFConductorAPI:
     def get_comfy_status(self) -> dict:
         """Get the current status of ComfyUI process"""
         # First check if we have a managed process
-        if self.comfy_process is not None:
-            poll = self.comfy_process.poll()
+        process = self.comfy_process
+        if process is not None:
+            poll = process.poll()
             if poll is None:
                 return {
                     'success': True,
                     'status': 'running',
                     'managed': True,
+                    'port': getattr(self, 'comfy_port', 8188),
                     'active_profile': self.active_profile_name
                 }
-            else:
-                # Process ended
-                self.comfy_process = None
         
         # Check if ComfyUI is running externally by trying to connect to its API
         try:
@@ -1781,76 +2097,96 @@ class MFConductorAPI:
         
         return {'success': True, 'status': 'stopped'}
     
-    def launch_comfy(self, profile_name: str = None) -> dict:
-        """Launch ComfyUI with optional profile"""
-        if self.comfy_process is not None and self.comfy_process.poll() is None:
-            return {'success': False, 'message': 'ComfyUI is already running'}
-        
-        # Clear output buffer
-        with self.output_lock:
-            self.comfy_output_buffer = []
-            self.comfy_output_index = 0
-        
-        # Apply profile first (enable/disable nodes)
+    @_process_action
+    def launch_comfy(self, profile_name: str = None, enabled_override=None,
+                     blocked_override=None, launch_label: str = None,
+                     extra_flags=None, reset_output: bool = True,
+                     restart_if_running: bool = False, flags_override=None) -> dict:
+        """Launch ComfyUI with optional profile, folder set, and package blocklist."""
+        profile = None
         if profile_name:
+            profile = get_user_data().get_profile(profile_name)
+            if profile is None:
+                return {'success': False, 'message': 'Profile not found'}
+        try:
+            flags = (list(flags_override) if flags_override is not None
+                     else build_profile_args(profile or {}))
+            extra_flags = [str(flag) for flag in (extra_flags or []) if flag]
+            flags.extend(extra_flags)
+            validate_launch_args(flags)
+        except ValueError as exc:
+            return {'success': False, 'message': str(exc)}
+        comfy_root = self.comfy_root
+        python_path = find_comfy_python(comfy_root)
+        main_script = comfy_root / 'main.py'
+        if not main_script.is_file():
+            return {'success': False, 'message': f'ComfyUI main.py not found at {main_script}'}
+
+        status = self.get_comfy_status()
+        if status.get('status') == 'running':
+            if not restart_if_running:
+                return {'success': False, 'message': 'ComfyUI is already running'}
+            if status.get('managed') is False:
+                return {
+                    'success': False,
+                    'message': 'ComfyUI is already running outside MF Conductor. Stop it first.',
+                }
+            self._append_comfy_log('Stopping ComfyUI to apply this workflow set...')
+            stop_result = self.stop_comfy()
+            if not stop_result.get('success') and 'not running' not in (stop_result.get('message') or '').lower():
+                return stop_result
+        
+        if reset_output:
+            with self.output_lock:
+                self.comfy_output_buffer = []
+                self.comfy_output_index = 0
+        
+        label = launch_label or (f'profile "{profile_name}"' if profile_name else 'ComfyUI')
+        apply_result = None
+        if enabled_override is not None:
+            with self.output_lock:
+                names = ', '.join(str(name) for name in enabled_override[:12])
+                extra = '' if len(enabled_override) <= 12 else f' (+{len(enabled_override) - 12} more)'
+                self.comfy_output_buffer.append({
+                    'text': f'Applying {label} - enabling {len(enabled_override)} packs: {names}{extra}',
+                    'type': 'info'
+                })
+            apply_result = self.apply_enabled_folders(enabled_override)
+        elif profile_name:
             with self.output_lock:
                 self.comfy_output_buffer.append({
                     'text': f'Applying profile "{profile_name}" - enabling/disabling nodes...',
                     'type': 'info'
                 })
-            
             apply_result = self.apply_profile(profile_name)
+
+        if apply_result is not None:
             if apply_result.get('success'):
                 results = apply_result.get('results', {})
                 enabled_count = len(results.get('enabled', []))
+                kept_count = len(results.get('kept', []))
                 disabled_count = len(results.get('disabled', []))
                 errors = results.get('errors', [])
                 
                 with self.output_lock:
+                    disabled_names = results.get('disabled') or []
+                    disabled_note = ''
+                    if disabled_names:
+                        preview = ', '.join(str(name) for name in disabled_names[:8])
+                        more = '' if len(disabled_names) <= 8 else f' (+{len(disabled_names) - 8} more)'
+                        disabled_note = f': {preview}{more}'
                     self.comfy_output_buffer.append({
-                        'text': f'Profile applied: {enabled_count} nodes enabled, {disabled_count} nodes disabled',
+                        'text': (
+                            f'Isolation applied: {enabled_count} turned on, '
+                            f'{kept_count} already on (includes Manager/Frisk/Crystools), '
+                            f'{disabled_count} turned off{disabled_note}'
+                        ),
                         'type': 'success'
                     })
                     for err in errors:
                         self.comfy_output_buffer.append({'text': f'Warning: {err}', 'type': 'warning'})
             else:
-                with self.output_lock:
-                    self.comfy_output_buffer.append({
-                        'text': f'Warning: Could not apply profile - {apply_result.get("message", "unknown error")}',
-                        'type': 'warning'
-                    })
-        
-        # Find ComfyUI paths
-        comfy_root = Path(__file__).parent.parent.parent  # custom_nodes/ComfyUI_MFConductor -> ComfyUI
-        portable_root = comfy_root.parent  # ComfyUI -> ComfyUI_windows_portable
-        
-        # Find Python executable - check multiple locations
-        python_path = None
-        possible_paths = [
-            portable_root / 'python_embeded' / 'python.exe',
-            portable_root / 'python' / 'python.exe',
-            Path(sys.executable)
-        ]
-        for p in possible_paths:
-            if p.exists():
-                python_path = p
-                break
-        
-        if python_path is None:
-            return {'success': False, 'message': 'Could not find Python executable'}
-        
-        # Build flags from profile using the shared helper
-        flags = []
-        if profile_name:
-            user_data = get_user_data()
-            profile = user_data.get_profile(profile_name)
-            if profile:
-                flags = self._build_comfy_args_from_profile(profile)
-        
-        # Build command
-        main_script = comfy_root / 'main.py'
-        if not main_script.exists():
-            return {'success': False, 'message': f'ComfyUI main.py not found at {main_script}'}
+                return {'success': False, 'message': apply_result.get('message', 'Could not apply node selection')}
         
         cmd = [str(python_path), '-u', str(main_script)] + flags  # -u for unbuffered output
         
@@ -1866,6 +2202,12 @@ class MFConductorAPI:
         
         try:
             # Start process with output capture
+            port = 8188
+            for index, flag in enumerate(flags):
+                if flag == '--port' and index + 1 < len(flags):
+                    port = int(flags[index + 1])
+                elif flag.startswith('--port='):
+                    port = int(flag.split('=', 1)[1])
             # Use CREATE_NEW_PROCESS_GROUP on Windows to allow proper termination
             creation_flags = 0
             if os.name == 'nt':
@@ -1875,11 +2217,27 @@ class MFConductorAPI:
             env = os.environ.copy()
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONUTF8'] = '1'
+            env.pop('MFCONDUCTOR_BLOCKED_PACKAGES', None)
+            
+            excluded_packages = blocked_override
+            if excluded_packages is None and profile:
+                excluded_packages = profile.get('excluded_packages', [])
+            if excluded_packages:
+                excluded_packages = [p for p in excluded_packages if not is_never_block_package(p)]
+            persist_blocked_packages(excluded_packages or [])
+            if excluded_packages:
+                env['MFCONDUCTOR_BLOCKED_PACKAGES'] = ','.join(excluded_packages)
+                with self.output_lock:
+                    self.comfy_output_buffer.append({
+                        'text': f'Blocking {len(excluded_packages)} packages: {", ".join(excluded_packages)}',
+                        'type': 'info'
+                    })
             
             self.comfy_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                bufsize=0,
                 cwd=str(comfy_root),
                 env=env,
                 creationflags=creation_flags
@@ -1887,12 +2245,24 @@ class MFConductorAPI:
             
             # Track which profile was used for this launch
             self.active_profile_name = profile_name
+            self.last_enabled_override = None if enabled_override is None else list(enabled_override)
+            self.last_blocked_override = list(excluded_packages or [])
+            self.last_flags_override = None if flags_override is None else list(flags_override)
+            self.last_extra_flags = extra_flags
+            self.comfy_port = port
             
             # Start output reader thread
-            reader_thread = threading.Thread(target=self._read_comfy_output, daemon=True)
+            reader_thread = threading.Thread(target=self._read_comfy_output, args=(self.comfy_process,), daemon=True)
             reader_thread.start()
+            self._append_comfy_log('ComfyUI process spawned. Waiting for startup output...')
+            threading.Thread(
+                target=self._watch_comfy_startup,
+                args=(self.comfy_process.pid,),
+                daemon=True,
+            ).start()
             
-            return {'success': True, 'message': 'ComfyUI started', 'pid': self.comfy_process.pid}
+            self.comfy_port = port
+            return {'success': True, 'message': 'ComfyUI started', 'pid': self.comfy_process.pid, 'port': port, 'flags': flags}
         except Exception as e:
             log_msg = f"[MF Conductor] Error launching ComfyUI: {e}"
             print(log_msg)
@@ -1922,15 +2292,28 @@ class MFConductorAPI:
         # Fallback: decode as UTF-8 replacing invalid chars
         return line_bytes.decode('utf-8', errors='replace')
     
-    def _read_comfy_output(self):
+    def _watch_comfy_startup(self, pid: int) -> None:
+        ready_markers = ('To see the GUI', 'Starting server', 'Prompt Server')
+        for _ in range(36):
+            time.sleep(10)
+            process = self.comfy_process
+            if process is None or process.pid != pid or process.poll() is not None:
+                return
+            with self.output_lock:
+                recent = [row.get('text', '') for row in self.comfy_output_buffer[-120:]]
+            if any(marker in text for text in recent for marker in ready_markers):
+                return
+            self._append_comfy_log('Still waiting for ComfyUI startup output...')
+
+    def _read_comfy_output(self, process):
         """Background thread to read ComfyUI output"""
         try:
-            if self.comfy_process is None or self.comfy_process.stdout is None:
+            if process.stdout is None:
                 return
             
             # Read binary and decode ourselves
             while True:
-                line_bytes = self.comfy_process.stdout.readline()
+                line_bytes = process.stdout.readline()
                 if not line_bytes:
                     break
                 
@@ -1951,23 +2334,30 @@ class MFConductorAPI:
                     line_type = 'info'
                 
                 with self.output_lock:
+                    if self.comfy_process is not process:
+                        break
                     self.comfy_output_buffer.append({'text': line, 'type': line_type})
                     # Prevent unbounded growth
                     if len(self.comfy_output_buffer) > self.max_comfy_output:
-                        self.comfy_output_buffer = self.comfy_output_buffer[-self.max_comfy_output:]
-                        self.comfy_output_index = min(self.comfy_output_index, len(self.comfy_output_buffer))
+                        overflow = len(self.comfy_output_buffer) - self.max_comfy_output
+                        self.comfy_output_buffer = self.comfy_output_buffer[overflow:]
+                        self.comfy_output_index = max(0, self.comfy_output_index - overflow)
                     
             # Process ended
             with self.output_lock:
-                if self.comfy_process and self.comfy_process.poll() is not None:
-                    exit_code = self.comfy_process.poll()
+                if self.comfy_process is process and process.poll() is not None:
+                    exit_code = process.poll()
                     self.comfy_output_buffer.append({
                         'text': f'Process exited with code {exit_code}',
                         'type': 'error' if exit_code != 0 else 'info'
                     })
         except Exception as e:
             with self.output_lock:
-                self.comfy_output_buffer.append({'text': f'[Output reader error: {e}]', 'type': 'error'})
+                if self.comfy_process is process:
+                    self.comfy_output_buffer.append({'text': f'[Output reader error: {e}]', 'type': 'error'})
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
     
     def get_comfy_output(self) -> dict:
         """Get new console output since last call"""
@@ -1983,6 +2373,7 @@ class MFConductorAPI:
             'status': status.get('status', 'stopped')
         }
     
+    @_process_action
     def stop_comfy(self) -> dict:
         """Stop the ComfyUI process"""
         if self.comfy_process is None or self.comfy_process.poll() is not None:
@@ -2023,24 +2414,22 @@ class MFConductorAPI:
             log_msg = f"[MF Conductor] Error stopping ComfyUI: {e}"
             print(log_msg)
             self.add_backend_log(log_msg, 'error')
-            self.comfy_process = None
             return {'success': False, 'message': str(e)}
     
+    @_process_action
     def restart_comfy(self) -> dict:
         """Restart ComfyUI using the same profile it was launched with"""
         # Use the profile that was active when ComfyUI was last launched
         profile_name = self.active_profile_name
         
-        # Stop if running
-        if self.comfy_process is not None and self.comfy_process.poll() is None:
-            stop_result = self.stop_comfy()
-            if not stop_result['success']:
-                return stop_result
-        
-        # Launch again with the same profile
-        return self.launch_comfy(profile_name)
-    
-    _ALLOWED_PYTHON_MODULES = {'pip', 'ensurepip', 'site', 'sysconfig'}
+        return self.launch_comfy(
+            profile_name,
+            enabled_override=self.last_enabled_override,
+            blocked_override=self.last_blocked_override,
+            extra_flags=self.last_extra_flags,
+            flags_override=self.last_flags_override,
+            restart_if_running=True,
+        )
 
     def run_python_command(self, command: str) -> dict:
         """Run a Python command in the ComfyUI environment (pip operations only)"""
@@ -2058,8 +2447,10 @@ class MFConductorAPI:
             return {'success': False, 'message': 'Empty command'}
         
         module_name = cmd_parts[0]
-        if module_name not in self._ALLOWED_PYTHON_MODULES:
-            return {'success': False, 'message': f'Module "{module_name}" is not allowed. Permitted: {", ".join(sorted(self._ALLOWED_PYTHON_MODULES))}'}
+        if module_name != 'pip':
+            return {'success': False, 'message': 'Only pip list/show/freeze/check are allowed in the terminal'}
+        if len(cmd_parts) < 2 or cmd_parts[1] not in ALLOWED_PIP_SUBCOMMANDS:
+            return {'success': False, 'message': 'Use the Packages tab to install or uninstall. Terminal pip is limited to list, show, freeze, and check.'}
         
         try:
             result = subprocess.run(
@@ -2083,61 +2474,34 @@ class MFConductorAPI:
     
     @staticmethod
     def _escape_ps_string(value: str) -> str:
-        """Escape a string for safe embedding inside a PowerShell double-quoted string."""
-        return value.replace('`', '``').replace('"', '`"').replace('$', '`$')
+        return escape_ps_string(value)
 
     def create_conductor_shortcut(self, save_path: str = None) -> dict:
         """Create a shortcut to launch MF Conductor standalone server"""
         try:
-            if os.name != 'nt':
-                return {'success': False, 'message': 'Shortcut creation is only supported on Windows'}
-            
-            # Default to Desktop if no path specified
-            if not save_path:
-                save_path = str(Path.home() / 'Desktop' / 'MF Conductor.lnk')
-            
-            # Ensure .lnk extension
-            if not save_path.endswith('.lnk'):
-                save_path = save_path + '.lnk'
-            
-            # Get paths
             conductor_dir = Path(__file__).parent
-            batch_file = conductor_dir / 'Launch_MFConductor.bat'
-            icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
-            icon_line = f'$Shortcut.IconLocation = "{self._escape_ps_string(str(icon_path))}"' if icon_path.exists() else ''
-            
-            ps_save = self._escape_ps_string(save_path)
-            ps_batch = self._escape_ps_string(str(batch_file))
-            ps_cdir = self._escape_ps_string(str(conductor_dir))
-            
-            ps_script = f'''
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("{ps_save}")
-$Shortcut.TargetPath = "{ps_batch}"
-$Shortcut.WorkingDirectory = "{ps_cdir}"
-$Shortcut.Description = "Launch MF Conductor - ComfyUI Control Center"
-{icon_line}
-$Shortcut.Save()
-'''
-            result = subprocess.run(
-                ['powershell', '-Command', ps_script],
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode == 0:
-                return {'success': True, 'message': f'Shortcut created at {save_path}', 'path': save_path}
+            if os.name == 'nt':
+                target = conductor_dir / 'Launch_MFConductor.bat'
             else:
-                return {'success': False, 'message': f'PowerShell error: {result.stderr}'}
+                target = conductor_dir / 'Launch_MFConductor.sh'
+            icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
+            dest, err = write_desktop_shortcut(
+                save_path,
+                str(target),
+                str(conductor_dir),
+                'MF Conductor',
+                'Launch MF Conductor - ComfyUI Control Center',
+                icon_path,
+            )
+            if dest is None:
+                return {'success': False, 'message': err}
+            return {'success': True, 'message': f'Shortcut created at {dest}', 'path': str(dest)}
         except Exception as e:
             return {'success': False, 'message': str(e)}
     
     def create_profile_shortcut(self, profile_name: str, save_path: str = None) -> dict:
         """Create a shortcut that launches ComfyUI with a specific profile"""
         try:
-            if os.name != 'nt':
-                return {'success': False, 'message': 'Shortcut creation is only supported on Windows'}
-            
             user_data = get_user_data()
             profiles = user_data.get_profiles()
             
@@ -2145,196 +2509,36 @@ $Shortcut.Save()
                 return {'success': False, 'message': f'Profile "{profile_name}" not found'}
             
             profile = profiles[profile_name]
-            
-            # Default to Desktop if no path specified
-            if not save_path:
-                safe_name = "".join(c for c in profile_name if c.isalnum() or c in (' ', '-', '_')).strip()
-                save_path = str(Path.home() / 'Desktop' / f'ComfyUI - {safe_name}.lnk')
-            
-            # Ensure .lnk extension
-            if not save_path.endswith('.lnk'):
-                save_path = save_path + '.lnk'
-            
-            # Get paths
             conductor_dir = Path(__file__).parent
             comfy_root = conductor_dir.parent.parent
-            portable_root = comfy_root.parent
-            
-            python_path = portable_root / 'python_embeded' / 'python.exe'
-            if not python_path.exists():
-                python_path = Path(sys.executable)
-            
-            # Create a Python launcher script that applies the profile and launches ComfyUI
-            safe_filename = profile_name.replace(" ", "_").replace("-", "_")
-            launcher_script = conductor_dir / 'data' / f'launch_{safe_filename}.py'
-            launcher_script.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Build command line args from profile
             args = self._build_comfy_args_from_profile(profile)
-            args_str = repr(args)
-            
-            # Get enabled/disabled node lists
-            enabled_list = repr(profile.get('enabled', []))
-            disabled_list = repr(profile.get('disabled', []))
-            
-            # Create the Python launcher script
-            launcher_content = f'''#!/usr/bin/env python
-"""Auto-generated launcher for profile: {profile_name}"""
-import os
-import sys
-import subprocess
-from pathlib import Path
-
-# Profile configuration
-PROFILE_NAME = {repr(profile_name)}
-ENABLED_NODES = {enabled_list}
-DISABLED_NODES = {disabled_list}
-COMFY_ARGS = {args_str}
-
-def apply_node_states(custom_nodes_path):
-    """Enable/disable nodes according to profile"""
-    if not ENABLED_NODES and not DISABLED_NODES:
-        return  # No node management needed
-    
-    # Get all node folders
-    all_folders = []
-    for item in custom_nodes_path.iterdir():
-        if item.is_dir() and not item.name.startswith('.'):
-            name = item.name.replace('.disabled', '')
-            all_folders.append(name)
-    
-    enabled_set = set(ENABLED_NODES) if ENABLED_NODES else set(all_folders)
-    
-    for folder_name in all_folders:
-        folder_path = custom_nodes_path / folder_name
-        disabled_path = custom_nodes_path / f"{{folder_name}}.disabled"
-        
-        if folder_name in enabled_set:
-            # Should be enabled
-            if disabled_path.exists() and not folder_path.exists():
-                disabled_path.rename(folder_path)
-                print(f"Enabled: {{folder_name}}")
-        else:
-            # Should be disabled
-            if folder_path.exists() and not disabled_path.exists():
-                folder_path.rename(disabled_path)
-                print(f"Disabled: {{folder_name}}")
-
-def main():
-    # Paths
-    script_dir = Path(__file__).parent.parent
-    comfy_root = script_dir.parent.parent
-    custom_nodes_path = comfy_root / 'custom_nodes'
-    
-    print(f"Launching ComfyUI with profile: {{PROFILE_NAME}}")
-    
-    # Apply node states
-    if ENABLED_NODES or DISABLED_NODES:
-        print("Applying node configuration...")
-        apply_node_states(custom_nodes_path)
-    
-    # Find Python
-    portable_root = comfy_root.parent
-    python_path = portable_root / 'python_embeded' / 'python.exe'
-    if not python_path.exists():
-        python_path = sys.executable
-    
-    # Launch ComfyUI
-    main_py = comfy_root / 'main.py'
-    cmd = [str(python_path), str(main_py)] + COMFY_ARGS
-    
-    print(f"Command: {{' '.join(cmd)}}")
-    print("-" * 50)
-    
-    os.chdir(comfy_root)
-    subprocess.run(cmd)
-
-if __name__ == '__main__':
-    main()
-'''
-            
-            with open(launcher_script, 'w') as f:
-                f.write(launcher_content)
-            
-            # Create batch wrapper
-            batch_file = conductor_dir / 'data' / f'launch_{safe_filename}.bat'
-            batch_content = f'@echo off\ncd /d "{conductor_dir / "data"}"\n"{python_path}" "{launcher_script}"\npause\n'
-            
-            with open(batch_file, 'w') as f:
-                f.write(batch_content)
-            
-            # Use PowerShell to create the shortcut with MF Conductor icon
+            launcher_script = write_profile_launcher(conductor_dir, profile_name, profile, args)
+            target = launcher_script.with_suffix('.bat' if os.name == 'nt' else '.sh')
             icon_path = conductor_dir / 'web' / 'mfconductor_logo.ico'
-            icon_line = f'$Shortcut.IconLocation = "{self._escape_ps_string(str(icon_path))}"' if icon_path.exists() else ''
-            
-            ps_save = self._escape_ps_string(save_path)
-            ps_batch = self._escape_ps_string(str(batch_file))
-            ps_croot = self._escape_ps_string(str(comfy_root))
-            ps_pname = self._escape_ps_string(profile_name)
-            
-            ps_script = f'''
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("{ps_save}")
-$Shortcut.TargetPath = "{ps_batch}"
-$Shortcut.WorkingDirectory = "{ps_croot}"
-$Shortcut.Description = "Launch ComfyUI with {ps_pname} profile"
-{icon_line}
-$Shortcut.Save()
-'''
-            result = subprocess.run(
-                ['powershell', '-Command', ps_script],
-                capture_output=True,
-                text=True
+            dest, err = write_desktop_shortcut(
+                save_path,
+                str(target),
+                str(comfy_root),
+                f'ComfyUI - {profile_name}',
+                f'Launch ComfyUI with {profile_name} profile',
+                icon_path,
             )
-            
-            if result.returncode == 0:
-                return {
-                    'success': True, 
-                    'message': f'Quick launch shortcut created at {save_path}',
-                    'path': save_path,
-                    'launcher_path': str(launcher_script)
-                }
-            else:
-                return {'success': False, 'message': f'PowerShell error: {result.stderr}'}
+            if dest is None:
+                return {'success': False, 'message': err}
+            return {
+                'success': True,
+                'message': f'Quick launch shortcut created at {dest}',
+                'path': str(dest),
+                'launcher_path': str(launcher_script),
+            }
         except Exception as e:
             import traceback
             traceback.print_exc()
             return {'success': False, 'message': str(e)}
     
     def _build_comfy_args_from_profile(self, profile: dict) -> list:
-        """Build command line arguments from a profile"""
-        args = []
-        flags = profile.get('flags', {})
-        
-        # Process all flag values - flags are stored as {"vram": "--highvram", "attention": "--use-sage-attention"}
-        for key, value in flags.items():
-            if value and isinstance(value, str) and value.startswith('--'):
-                # Split in case there are multiple flags in one value
-                args.extend(value.split())
-        
-        # Port
-        port = profile.get('port')
-        if port:
-            args.extend(['--port', str(port)])
-        
-        # Listen address
-        listen = profile.get('listen')
-        if listen:
-            args.extend(['--listen', listen])
-        
-        # Custom flags string
-        custom_flags = profile.get('custom_flags', '')
-        if custom_flags:
-            args.extend(custom_flags.split())
-        
-        # Custom flags list
-        custom_flags_list = profile.get('custom_flags_list', [])
-        if custom_flags_list:
-            for flag in custom_flags_list:
-                if flag and isinstance(flag, str):
-                    args.extend(flag.split())
-        
-        return args
+        return build_profile_args(profile)
+
 
 
 class MFConductorHandler(SimpleHTTPRequestHandler):
@@ -2366,7 +2570,7 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         skip_patterns = [
             '/api/comfy/output', '/api/comfy/status', '/api/backend-logs',
             '/api/files/thumbnail', '/api/files/serve',
-            'code 404', 'File not found'
+            '/ws', 'code 404', 'File not found'
         ]
         if any(x in msg_str for x in skip_patterns):
             return
@@ -2383,27 +2587,153 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         try:
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(data).encode('utf-8'))
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             pass  # Client disconnected - ignore
     
+    def _is_local_client(self):
+        return is_local_api_request(
+            self.client_address[0] if self.client_address else '',
+            self.headers.get('Host', ''), self.headers,
+        )
+
     def do_OPTIONS(self):
-        """Handle CORS preflight"""
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        parsed = urlparse(self.path)
+        if (parsed.path.startswith('/api/') or parsed.path == '/ws') and not self._is_local_client():
+            self.send_error(403, 'Forbidden')
+            return
+        self.send_response(204)
         self.end_headers()
+    
+    def _handle_ws_upgrade(self):
+        """Handle WebSocket upgrade on the same HTTP port"""
+        raw_socket = self.request
+        try:
+            key = None
+            for header_name in ('Sec-WebSocket-Key', 'sec-websocket-key'):
+                val = self.headers.get(header_name)
+                if val:
+                    key = val
+                    break
+            if not key:
+                self.send_error(400, 'Missing Sec-WebSocket-Key')
+                return
+            
+            GUID = '258EAFA5-E914-47DA-95CA-5AB9ADF63B05'
+            accept = base64.b64encode(
+                hashlib.sha1((key + GUID).encode()).digest()
+            ).decode()
+            
+            response = (
+                'HTTP/1.1 101 Switching Protocols\r\n'
+                'Upgrade: websocket\r\n'
+                'Connection: Upgrade\r\n'
+                f'Sec-WebSocket-Accept: {accept}\r\n'
+                ''
+                '\r\n'
+            )
+            # Write directly to raw socket to avoid buffering issues
+            raw_socket.sendall(response.encode())
+            
+            # Set socket to blocking mode with no timeout for WebSocket
+            raw_socket.setblocking(True)
+            raw_socket.settimeout(None)
+            
+            self.api.ws_register(raw_socket)
+            
+            welcome = json.dumps({'type': 'connected', 'data': {'message': 'MF Conductor WebSocket'}})
+            raw_socket.sendall(_ws_encode_frame(welcome))
+            
+            buffer = b''
+            while True:
+                ready = select.select([raw_socket], [], [], 30)
+                if not ready[0]:
+                    try:
+                        raw_socket.sendall(struct.pack('!BB', 0x89, 0))
+                    except Exception:
+                        break
+                    continue
+                
+                try:
+                    chunk = raw_socket.recv(4096)
+                except Exception:
+                    break
+                if not chunk:
+                    break
+                
+                buffer += chunk
+                while buffer:
+                    opcode, payload = _ws_decode_frame(buffer)
+                    if opcode is None:
+                        break
+                    
+                    frame_len = 2
+                    raw_len = buffer[1] & 0x7F
+                    if raw_len == 126:
+                        frame_len = 4
+                    elif raw_len == 127:
+                        frame_len = 10
+                    if (buffer[1] & 0x80) != 0:
+                        frame_len += 4
+                    actual_len = raw_len
+                    if raw_len == 126:
+                        actual_len = struct.unpack('!H', buffer[2:4])[0]
+                    elif raw_len == 127:
+                        actual_len = struct.unpack('!Q', buffer[2:10])[0]
+                    frame_len += actual_len
+                    buffer = buffer[frame_len:]
+                    
+                    if opcode == 0x8:
+                        try:
+                            raw_socket.sendall(struct.pack('!BB', 0x88, 0))
+                        except Exception:
+                            pass
+                        self.api.ws_unregister(raw_socket)
+                        self.close_connection = True
+                        return
+                    elif opcode == 0x9:
+                        try:
+                            pong = struct.pack('!BB', 0x8A, len(payload)) + payload
+                            raw_socket.sendall(pong)
+                        except Exception:
+                            pass
+                    elif opcode == 0x1:
+                        try:
+                            msg = json.loads(payload.decode('utf-8'))
+                            if msg.get('type') == 'ping':
+                                reply = json.dumps({'type': 'pong', 'data': {}})
+                                raw_socket.sendall(_ws_encode_frame(reply))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        finally:
+            self.api.ws_unregister(self.request)
+            self.close_connection = True
     
     def do_GET(self):
         """Handle GET requests"""
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+
+        if (path.startswith('/api/') or path == '/ws') and not self._is_local_client():
+            self.send_json({'success': False, 'message': 'MF Conductor API is localhost-only'}, 403)
+            return
+        
+        # WebSocket upgrade on same port — no separate WS server needed
+        if path == '/ws':
+            upgrade_header = self.headers.get('Upgrade', '')
+            connection_header = self.headers.get('Connection', '')
+            if 'websocket' in upgrade_header.lower() or 'upgrade' in connection_header.lower():
+                self._handle_ws_upgrade()
+                return
         
         # API routes
+        if path == '/api/workflows/launch-options':
+            self.send_json(workflow_launch_options(self.api.scanner, get_user_data()))
+            return
         if path == '/api/nodes':
             fast = query.get('fast', ['false'])[0].lower() in ('1', 'true', 'yes')
             data = self.api.get_nodes(fast=fast)
@@ -2411,32 +2741,32 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/details'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.get_node(folder_name)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/requirements'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.get_requirements(folder_name)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/disk-usage'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.get_disk_usage(folder_name)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/git-log'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             count = int(query.get('count', ['10'])[0])
             data = self.api.get_git_log(folder_name, count)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/check-updates'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.check_updates(folder_name)
             self.send_json(data)
             return
@@ -2453,13 +2783,13 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/tags'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.get_tags(folder_name)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/note'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.get_note(folder_name)
             self.send_json(data)
             return
@@ -2544,13 +2874,14 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             self.send_json({
                 'success': True,
                 'logs': new_logs,
-                'next_index': len(self.api.backend_logs)
+                'next_index': self.api.backend_log_base + len(self.api.backend_logs)
             })
             return
         
         # Packages
         if path == '/api/packages':
-            data = self.api.get_packages()
+            refresh = query.get('refresh', ['false'])[0].lower() in ('1', 'true', 'yes')
+            data = self.api.get_packages(refresh=refresh)
             self.send_json(data)
             return
         
@@ -2688,6 +3019,15 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             self.send_json({'success': True, **progress})
             return
         
+        if path == '/api/workflows':
+            self.send_json(self.api.list_workflows())
+            return
+        
+        if path == '/api/workflows/analyze':
+            rel_path = query.get('path', [''])[0]
+            self.send_json(self.api.analyze_workflow(rel_path))
+            return
+        
         # Serve static files
         if path == '/' or path == '':
             self.path = '/index.html'
@@ -2701,15 +3041,30 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         """Handle POST requests"""
         parsed = urlparse(self.path)
         path = parsed.path
-        # Debug: print(f"[MF Conductor] POST request: {path}")
+        if path.startswith('/api/') and not self._is_local_client():
+            self.send_json({'success': False, 'message': 'MF Conductor API is localhost-only'}, 403)
+            return
+
+        if self.headers.get_content_type() != 'application/json':
+            self.send_json({'success': False, 'message': 'Content-Type must be application/json'}, 415)
+            return
         
         # Read request body
-        content_length = int(self.headers.get('Content-Length', 0))
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length < 0:
+                raise ValueError
+        except ValueError:
+            self.send_json({'success': False, 'message': 'Invalid Content-Length'}, 400)
+            return
         body = {}
         if content_length > 0:
             try:
                 raw_body = self.rfile.read(content_length).decode('utf-8')
                 body = json.loads(raw_body)
+                if not isinstance(body, dict):
+                    self.send_json({'success': False, 'message': 'JSON object required'}, 400)
+                    return
             except json.JSONDecodeError as e:
                 log_msg = f"[MF Conductor] JSON decode error: {e}"
                 print(log_msg)
@@ -2743,31 +3098,31 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/update'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.update_node(folder_name)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/open-folder'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.open_folder(folder_name)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/remove'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.remove_node(folder_name)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/deactivate'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.deactivate_node(folder_name)
             self.send_json(data)
             return
         
         if path.startswith('/api/nodes/') and path.endswith('/activate'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.activate_node(folder_name)
             self.send_json(data)
             return
@@ -2894,14 +3249,14 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         
         # Favorites
         if path.startswith('/api/nodes/') and path.endswith('/toggle-favorite'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             data = self.api.toggle_favorite(folder_name)
             self.send_json(data)
             return
         
         # Tags
         if path.startswith('/api/nodes/') and path.endswith('/tags'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             tags = body.get('tags', [])
             data = self.api.set_tags(folder_name, tags)
             self.send_json(data)
@@ -2909,7 +3264,7 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         
         # Notes
         if path.startswith('/api/nodes/') and path.endswith('/note'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             note = body.get('note', '')
             data = self.api.set_note(folder_name, note)
             self.send_json(data)
@@ -3029,7 +3384,7 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         
         # Rollback
         if path.startswith('/api/nodes/') and path.endswith('/rollback'):
-            folder_name = path.split('/')[3]
+            folder_name = unquote(path.split('/')[3])
             commit_hash = body.get('commit_hash', '')
             if not commit_hash:
                 self.send_json({'success': False, 'message': 'Commit hash is required'}, 400)
@@ -3055,6 +3410,39 @@ class MFConductorHandler(SimpleHTTPRequestHandler):
         if path == '/api/comfy/launch':
             profile = body.get('profile', '')
             data = self.api.launch_comfy(profile)
+            self.send_json(data)
+            return
+        
+        if path == '/api/workflows/resolve-missing':
+            self.send_json(self.api.resolve_missing_workflow_packs(body.get('names') or []))
+            return
+
+        if path == '/api/workflows/install-missing':
+            self.send_json(self.api.install_missing_workflow_packs(body.get('names') or []))
+            return
+
+        if path == '/api/workflows/launch':
+            profile = body.get('profile') or ''
+            data = self.api.launch_workflow(body.get('path'), profile or None, body.get('paths'),
+                                           body.get('launch_flags'), body.get('extra_nodes') or [])
+            if not data.get('success') and data.get('message') == 'Workflow path is required':
+                self.send_json(data, 400)
+                return
+            self.send_json(data)
+            return
+        
+        if path == '/api/workflows/apply':
+            prepared, error = self.api._isolation_for_workflows(body.get('path'), body.get('paths'))
+            if error:
+                status = 400 if error.get('message') == 'Workflow path is required' else 200
+                self.send_json(error, status)
+                return
+            data = self.api.apply_enabled_folders(prepared['enabled'])
+            if not data.get('results', {}).get('errors'):
+                persist_pending_workflow(prepared['paths'][0], prepared['paths'])
+            self.api.persist_default_profile_blocks()
+            data['analysis'] = prepared['analysis']
+            data['paths'] = prepared['paths']
             self.send_json(data)
             return
         
@@ -3131,6 +3519,60 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
         self.send_json({'success': False, 'message': 'Not found'}, 404)
 
 
+# ==================== WebSocket helpers ====================
+
+def _ws_encode_frame(message: str) -> bytes:
+    """Encode a string into a WebSocket text frame"""
+    payload = message.encode('utf-8')
+    length = len(payload)
+    if length <= 125:
+        header = struct.pack('!BB', 0x81, length)
+    elif length <= 65535:
+        header = struct.pack('!BBH', 0x81, 126, length)
+    else:
+        header = struct.pack('!BBQ', 0x81, 127, length)
+    return header + payload
+
+
+def _ws_decode_frame(data: bytes):
+    """Decode a WebSocket frame, returns (opcode, payload_bytes) or (None, None)"""
+    if len(data) < 2:
+        return None, None
+    
+    opcode = data[0] & 0x0F
+    masked = (data[1] & 0x80) != 0
+    length = data[1] & 0x7F
+    offset = 2
+    
+    if length == 126:
+        if len(data) < 4:
+            return None, None
+        length = struct.unpack('!H', data[2:4])[0]
+        offset = 4
+    elif length == 127:
+        if len(data) < 10:
+            return None, None
+        length = struct.unpack('!Q', data[2:10])[0]
+        offset = 10
+    
+    if masked:
+        if len(data) < offset + 4:
+            return None, None
+        mask = data[offset:offset + 4]
+        offset += 4
+    
+    if len(data) < offset + length:
+        return None, None
+    
+    payload = data[offset:offset + length]
+    if masked:
+        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    
+    return opcode, payload
+
+
+
+
 def run_server(host: str = 'localhost', port: int = 8199, custom_nodes_path: str = None, open_browser: bool = True):
     """Run the standalone MF Conductor server"""
     
@@ -3138,8 +3580,10 @@ def run_server(host: str = 'localhost', port: int = 8199, custom_nodes_path: str
     MFConductorHandler.api = MFConductorAPI(custom_nodes_path)
     MFConductorHandler.web_dir = Path(__file__).parent / 'web'
     
-    # Create server
-    server = HTTPServer((host, port), MFConductorHandler)
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+    
+    server = ThreadedHTTPServer((host, port), MFConductorHandler)
     
     print("=" * 60)
     print("  MF Conductor - Custom Node Manager")
@@ -3188,4 +3632,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
