@@ -363,8 +363,13 @@ def clear_pending_workflow() -> None:
         pass
 
 
-def apply_enabled_folders(scanner, enabled_folders: Iterable[str]) -> Dict[str, List[str]]:
-    """Enable the given folders plus always-on packs; disable the rest."""
+def apply_enabled_folders(scanner, enabled_folders: Iterable[str], disable_others: bool = True) -> Dict[str, List[str]]:
+    """Enable the given folders plus always-on packs.
+
+    disable_others renames every other pack to .disabled. Workflow launches leave
+    them in place and pass ComfyUI a whitelist, because an editor can have the
+    folder open and Windows then refuses the rename.
+    """
     results = {'enabled': [], 'disabled': [], 'kept': [], 'errors': []}
     enabled_folders = merge_required_folders(enabled_folders, scanner.list_folder_names())
     enabled_set = {
@@ -380,6 +385,8 @@ def apply_enabled_folders(scanner, enabled_folders: Iterable[str]) -> Dict[str, 
                 results['kept'].append(folder)
             elif 'not found' not in msg.lower():
                 results['errors'].append(f'{folder}: {msg}')
+        elif not disable_others:
+            continue
         else:
             ok, msg = scanner.deactivate_node(folder)
             if ok:

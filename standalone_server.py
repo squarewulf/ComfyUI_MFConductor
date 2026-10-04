@@ -63,7 +63,7 @@ from security_utils import (
     valid_pip_package,
     valid_pip_version,
 )
-from profile_launch import build_profile_args, parse_launch_flags, validate_launch_args, persist_blocked_packages, workflow_launch_options, write_desktop_shortcut, write_profile_launcher
+from profile_launch import build_profile_args, isolation_launch_flags, parse_launch_flags, persist_blocked_packages, strip_custom_node_isolation, validate_launch_args, workflow_launch_options, write_desktop_shortcut, write_profile_launcher
 
 
 def _process_action(method):
@@ -702,8 +702,8 @@ class MFConductorAPI:
         persist_blocked_packages(profile.get('excluded_packages') or [])
         return {'success': True, 'results': results}
 
-    def apply_enabled_folders(self, enabled_folders) -> dict:
-        results = apply_enabled_folders(self.scanner, enabled_folders)
+    def apply_enabled_folders(self, enabled_folders, disable_others: bool = True) -> dict:
+        results = apply_enabled_folders(self.scanner, enabled_folders, disable_others=disable_others)
         self._cached_nodes = None
         if results['errors']:
             return {'success': False, 'message': '; '.join(results['errors']), 'results': results}
@@ -2151,7 +2151,7 @@ class MFConductorAPI:
                     'text': f'Applying {label} - enabling {len(enabled_override)} packs: {names}{extra}',
                     'type': 'info'
                 })
-            apply_result = self.apply_enabled_folders(enabled_override)
+            apply_result = self.apply_enabled_folders(enabled_override, disable_others=False)
         elif profile_name:
             with self.output_lock:
                 self.comfy_output_buffer.append({
@@ -2175,18 +2175,27 @@ class MFConductorAPI:
                         preview = ', '.join(str(name) for name in disabled_names[:8])
                         more = '' if len(disabled_names) <= 8 else f' (+{len(disabled_names) - 8} more)'
                         disabled_note = f': {preview}{more}'
-                    self.comfy_output_buffer.append({
-                        'text': (
+                    if enabled_override is not None:
+                        summary = (
+                            f'Isolation applied: loading {len(enabled_override)} packs. '
+                            'Other packs stay where they are; ComfyUI will skip them.'
+                        )
+                    else:
+                        summary = (
                             f'Isolation applied: {enabled_count} turned on, '
                             f'{kept_count} already on (includes Manager/Frisk/Crystools), '
                             f'{disabled_count} turned off{disabled_note}'
-                        ),
+                        )
+                    self.comfy_output_buffer.append({
+                        'text': summary,
                         'type': 'success'
                     })
                     for err in errors:
                         self.comfy_output_buffer.append({'text': f'Warning: {err}', 'type': 'warning'})
             else:
                 return {'success': False, 'message': apply_result.get('message', 'Could not apply node selection')}
+            if enabled_override is not None:
+                flags = strip_custom_node_isolation(flags) + isolation_launch_flags(enabled_override)
         
         cmd = [str(python_path), '-u', str(main_script)] + flags  # -u for unbuffered output
         

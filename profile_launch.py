@@ -45,6 +45,44 @@ def validate_launch_args(args):
     return args
 
 
+def strip_custom_node_isolation(args):
+    """Drop an existing custom-node whitelist so a launch can set its own."""
+    cleaned = []
+    skipping_names = False
+    for arg in args:
+        if skipping_names:
+            if str(arg).startswith('--'):
+                skipping_names = False
+            else:
+                continue
+        if arg == '--disable-all-custom-nodes':
+            continue
+        if arg == '--whitelist-custom-nodes':
+            skipping_names = True
+            continue
+        if str(arg).startswith('--whitelist-custom-nodes='):
+            continue
+        cleaned.append(arg)
+    return cleaned
+
+
+def isolation_launch_flags(folder_names):
+    """ComfyUI flags that load only these packs, without renaming the others."""
+    names = []
+    seen = set()
+    for name in folder_names or []:
+        base = str(name).removesuffix('.disabled').strip()
+        key = base.lower()
+        if not base or key in seen:
+            continue
+        seen.add(key)
+        names.append(base)
+    flags = ['--disable-all-custom-nodes']
+    if names:
+        flags.extend(['--whitelist-custom-nodes', *names])
+    return flags
+
+
 def build_profile_args(profile):
     args = []
     for value in (profile.get('flags') or {}).values():

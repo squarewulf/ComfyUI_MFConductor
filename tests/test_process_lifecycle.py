@@ -89,6 +89,20 @@ class ProcessLifecycleTests(unittest.TestCase):
         self.assertEqual(self.api.comfy_port, 8195)
         self.assertIsNone(self.api.last_enabled_override)
 
+    def test_workflow_isolation_uses_whitelist_instead_of_renames(self):
+        self.api.apply_enabled_folders.return_value = {
+            'success': True,
+            'results': {'enabled': [], 'kept': ['Example'], 'disabled': [], 'errors': []},
+        }
+        process = Mock(pid=123)
+        with patch('standalone_server.subprocess.Popen', return_value=process) as spawn:
+            result = self.api.launch_comfy(enabled_override=['Example', 'ComfyUI-Manager'])
+        self.assertTrue(result['success'], result)
+        command = spawn.call_args.args[0]
+        self.assertEqual(command[command.index('--whitelist-custom-nodes') + 1:], ['Example', 'ComfyUI-Manager'])
+        self.assertIn('--disable-all-custom-nodes', command)
+        self.assertFalse(self.api.apply_enabled_folders.call_args.kwargs['disable_others'])
+
     def test_isolation_error_prevents_spawn(self):
         self.api.apply_enabled_folders.return_value = {'success': False, 'message': 'Folder collision'}
         with patch('standalone_server.subprocess.Popen') as spawn:
@@ -188,6 +202,15 @@ class IsolationFailureTests(unittest.TestCase):
         result = apply_enabled_folders(scanner, ['Example'])
         self.assertEqual(result['errors'], ['Example: duplicate folders'])
         self.assertEqual(result['kept'], [])
+
+    def test_workflow_isolation_does_not_rename_other_packs(self):
+        scanner = Mock()
+        scanner.list_folder_names.return_value = ['Example', 'ComfyUI-Memory-Cleaner']
+        scanner.activate_node.return_value = (False, 'Node is already active: Example')
+        result = apply_enabled_folders(scanner, ['Example'], disable_others=False)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['disabled'], [])
+        scanner.deactivate_node.assert_not_called()
 
     def test_profile_apply_reports_errors_without_changing_package_blocks(self):
         api = object.__new__(MFConductorAPI)
