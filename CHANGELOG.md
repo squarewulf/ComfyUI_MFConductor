@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Workflow launch setup with editable flags, profile presets, installed utility packs, and optional extra nodes.
 - Isolated regression checks for request security, profile shortcuts, folder preservation, package blocking, and frontend escaping.
 
+### Changed
+- Standalone workflow launch no longer renames unused packs. ComfyUI is started with `--disable-all-custom-nodes` and `--whitelist-custom-nodes`, so an editor can keep those folders open.
+
 ## [1.4.5] - 2026-09-07
 
 ### Fixed
@@ -60,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integrated package install accepts `/api/packages/install`. Profile Apply works while ComfyUI is already running.
 
 ### Changed
+- Standalone workflow launch no longer renames unused packs. ComfyUI is started with `--disable-all-custom-nodes` and `--whitelist-custom-nodes`, so an editor can keep those folders open.
 - File browser no longer includes `models`.
 - Standalone WebSocket connects only in standalone mode.
 - Restart clears the console before the new process starts.

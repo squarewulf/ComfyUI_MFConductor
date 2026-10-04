@@ -70,7 +70,7 @@ The core of the application. Manage launch configurations that control every asp
 * **Launch Flags** - Configure VRAM limits (`--lowvram`), attention modes, and preview methods visually.
 * **Package Exclusion** - Prevent specific Python packages from loading (e.g., `bitsandbytes`) to avoid CUDA conflicts.
 * **Desktop Shortcuts** - Generate Desktop shortcuts for a profile or for MF Conductor itself (Windows `.lnk`, Linux `.desktop`, macOS `.command`).
-* **Workflow Launch** - The Workflows tab reads `ComfyUI/user/default/workflows` and starts ComfyUI with only the custom nodes that graph uses. Unused node folders are disabled. Flags and any extra excluded packages come from your default profile.
+* **Workflow Launch** - The Workflows tab reads `ComfyUI/user/default/workflows` and starts ComfyUI with only the custom nodes that graph uses. Standalone launch passes a pack whitelist, so unused folders are not renamed. Flags and any extra excluded packages come from your default profile.
 
 ### ❖ Node Management
 
@@ -159,10 +159,12 @@ Profiles define the state of the ComfyUI runtime.
 | Profile | Target Hardware | Description |
 | --- | --- | --- |
 | **GPU Standard** | Most GPUs | Balanced configuration. |
-| **GPU High VRAM** | 16GB+ | Maximizes caching and performance. |
-| **GPU Low VRAM** | 6-8GB | Optimizes VRAM usage (`--lowvram`). |
+| **GPU High VRAM** | 12GB+ | Maximizes caching and performance (`--highvram`). |
+| **GPU Low VRAM** | 4-6GB | Optimizes VRAM usage (`--lowvram`). |
+| **GPU Very Low VRAM** | 2-4GB | Maximum memory savings (`--novram`). |
 | **CPU Only** | CPU | Runs without GPU acceleration (`--cpu`). |
 | **DirectML** | AMD/Intel (Win) | Uses DirectML backend. |
+| **Preview Mode** | Most GPUs | Fast preview generation (`--lowvram`, `--preview-method auto`). |
 
 ### Configuration Logic
 
@@ -173,7 +175,9 @@ When a profile is launched, MF Conductor performs the following operations:
 3. Sets `MFCONDUCTOR_BLOCKED_PACKAGES` and writes `data/blocked_packages.txt` so excluded packages look uninstalled to `import` and `importlib.util.find_spec()` on the next start.
 4. Injects selected launch flags (e.g., `--preview-method auto`).
 
-> **Note:** ComfyUI skips folders whose name ends in `.disabled`. MF Conductor does not patch ComfyUI. The management API is localhost-only.
+A standalone workflow launch does not rename unused packs. It adds `--disable-all-custom-nodes` and `--whitelist-custom-nodes` so ComfyUI skips them even when an editor has the folder open. Integrated workflow launch still renames folders, then writes a launcher to run after you stop ComfyUI.
+
+> **Note:** ComfyUI skips folders whose name ends in `.disabled`, and it also skips packs that are not on the whitelist when `--disable-all-custom-nodes` is set. MF Conductor does not patch ComfyUI. The management API is localhost-only.
 
 Management requests must use a loopback Host and the same browser origin. API POST requests require `Content-Type: application/json`, including actions without a body. Desktop profile shortcuts use the same node selection rules as the management API.
 
@@ -233,7 +237,7 @@ This is typically a Windows CLI encoding issue. It does not affect functionality
 Disabled folders must be named `YourNode.disabled`. Restart ComfyUI after applying a profile. A leftover `.disabled` *file* inside a folder does not stop ComfyUI from loading it; use Activate/Deactivate in MF Conductor to migrate that leftover to a folder rename.
 
 **Node scan hangs or is very slow**
-This was fixed in v1.3.1. If you're experiencing hangs, ensure you have the latest version.
+Update to the current release. A full scan should finish in a few seconds.
 
 **Excluded packages still loading**
 Apply or launch a profile/workflow first so `data/blocked_packages.txt` is written. The next ComfyUI start reads that file (or `MFCONDUCTOR_BLOCKED_PACKAGES` if set). A start that happens before any Apply will not block packages.
@@ -268,6 +272,6 @@ The checks use temporary node folders and an inert local API. They do not launch
 
 The Workflows page uses the same search, sort direction, Grid and List controls as the other collection pages. Folders adds a collapsible workflow tree. Select workflows to launch their combined dependencies.
 
-Use **Launch setup** to choose initial profile flags, edit the complete flag text, and select additional installed node packs. These edits do not change the saved profile. Installed Manager, ModelFrisk, MediaFrisk, Crystools, and MFConductor stay enabled automatically. Other packs stay enabled only when needed by the selected workflows or explicitly selected as extras.
+Use **Launch setup** to choose initial profile flags, edit the complete flag text, and select additional installed node packs. These edits do not change the saved profile. Installed Manager, ModelFrisk, MediaFrisk, Crystools, and MFConductor are always included. Other packs load only when a selected workflow needs them or you add them as extras.
 
-Standalone MFConductor starts ComfyUI with the edited flags and selected port. Inside ComfyUI, Launch prepares a launcher file and shows its path; stop ComfyUI and run that file to apply startup flags. Restart MFConductor after updating its Python files, then refresh the browser to load the updated interface.
+Standalone MF Conductor starts ComfyUI with those flags, the selected port, and `--whitelist-custom-nodes`. Packs that are not on that list stay on disk and are not imported. Inside ComfyUI, Launch prepares a launcher file and shows its path; stop ComfyUI and run that file. That launcher renames unused folders to `.disabled`. Restart MF Conductor after updating its Python files, then refresh the browser to load the updated interface.
