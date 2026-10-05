@@ -2143,6 +2143,7 @@ class MFConductorAPI:
         
         label = launch_label or (f'profile "{profile_name}"' if profile_name else 'ComfyUI')
         apply_result = None
+        whitelist_names = None
         if enabled_override is not None:
             with self.output_lock:
                 names = ', '.join(str(name) for name in enabled_override[:12])
@@ -2152,13 +2153,15 @@ class MFConductorAPI:
                     'type': 'info'
                 })
             apply_result = self.apply_enabled_folders(enabled_override, disable_others=False)
+            whitelist_names = list(enabled_override)
         elif profile_name:
             with self.output_lock:
                 self.comfy_output_buffer.append({
-                    'text': f'Applying profile "{profile_name}" - enabling/disabling nodes...',
+                    'text': f'Applying profile "{profile_name}" - selecting its packs...',
                     'type': 'info'
                 })
-            apply_result = self.apply_profile(profile_name)
+            whitelist_names = folders_for_profile(profile, self.scanner.list_folder_names())
+            apply_result = self.apply_enabled_folders(whitelist_names, disable_others=False)
 
         if apply_result is not None:
             if apply_result.get('success'):
@@ -2175,9 +2178,9 @@ class MFConductorAPI:
                         preview = ', '.join(str(name) for name in disabled_names[:8])
                         more = '' if len(disabled_names) <= 8 else f' (+{len(disabled_names) - 8} more)'
                         disabled_note = f': {preview}{more}'
-                    if enabled_override is not None:
+                    if whitelist_names is not None:
                         summary = (
-                            f'Isolation applied: loading {len(enabled_override)} packs. '
+                            f'Isolation applied: loading {len(whitelist_names)} packs. '
                             'Other packs stay where they are; ComfyUI will skip them.'
                         )
                     else:
@@ -2194,8 +2197,8 @@ class MFConductorAPI:
                         self.comfy_output_buffer.append({'text': f'Warning: {err}', 'type': 'warning'})
             else:
                 return {'success': False, 'message': apply_result.get('message', 'Could not apply node selection')}
-            if enabled_override is not None:
-                flags = strip_custom_node_isolation(flags) + isolation_launch_flags(enabled_override)
+            if whitelist_names is not None:
+                flags = strip_custom_node_isolation(flags) + isolation_launch_flags(whitelist_names)
         
         cmd = [str(python_path), '-u', str(main_script)] + flags  # -u for unbuffered output
         
@@ -2254,7 +2257,7 @@ class MFConductorAPI:
             
             # Track which profile was used for this launch
             self.active_profile_name = profile_name
-            self.last_enabled_override = None if enabled_override is None else list(enabled_override)
+            self.last_enabled_override = None if whitelist_names is None else list(whitelist_names)
             self.last_blocked_override = list(excluded_packages or [])
             self.last_flags_override = None if flags_override is None else list(flags_override)
             self.last_extra_flags = extra_flags

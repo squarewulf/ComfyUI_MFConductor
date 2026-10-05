@@ -10,7 +10,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from profile_launch import build_profile_args, parse_launch_flags
+from node_scanner import NodeScanner
+from profile_launch import build_profile_args, parse_launch_flags, write_profile_launcher
 from standalone_server import MFConductorAPI
 from workflow_analyzer import apply_enabled_folders
 
@@ -88,6 +89,20 @@ class ProcessLifecycleTests(unittest.TestCase):
         self.assertEqual(spawn.call_args.kwargs['cwd'], str(self.root))
         self.assertEqual(self.api.comfy_port, 8195)
         self.assertIsNone(self.api.last_enabled_override)
+
+    def test_profile_launch_uses_whitelist_instead_of_renames(self):
+        self.user.get_profile.return_value = {'flags': {}}
+        self.api.apply_enabled_folders.return_value = {
+            'success': True,
+            'results': {'enabled': [], 'kept': [], 'disabled': [], 'errors': []},
+        }
+        process = Mock(pid=123)
+        with patch('standalone_server.subprocess.Popen', return_value=process) as spawn:
+            result = self.api.launch_comfy('example')
+        self.assertTrue(result['success'], result)
+        self.api.apply_profile.assert_not_called()
+        self.assertFalse(self.api.apply_enabled_folders.call_args.kwargs['disable_others'])
+        self.assertIn('--disable-all-custom-nodes', spawn.call_args.args[0])
 
     def test_workflow_isolation_uses_whitelist_instead_of_renames(self):
         self.api.apply_enabled_folders.return_value = {
@@ -192,6 +207,33 @@ class ProcessLifecycleTests(unittest.TestCase):
                 self.assertTrue(first.result(timeout=5)['success'])
                 self.assertFalse(second.result(timeout=5)['success'])
             popen.assert_called_once()
+
+
+class LockedFolderTests(unittest.TestCase):
+    def test_locked_disabled_folder_is_linked(self):
+        temp = tempfile.TemporaryDirectory(prefix='mfconductor-link-')
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        disabled = root / 'Example.disabled'
+        disabled.mkdir()
+        (disabled / 'keep.txt').write_text('x', encoding='utf-8')
+        scanner = NodeScanner(str(root))
+        with patch('node_scanner._rename_node_folder', side_effect=PermissionError):
+            ok, message = scanner.activate_node('Example')
+        self.assertTrue(ok, message)
+        self.assertEqual((root / 'Example' / 'keep.txt').read_text(encoding='utf-8'), 'x')
+        ok, message = scanner.activate_node('Example')
+        self.assertIn('already', message.lower())
+
+    def test_generated_launcher_whitelists_instead_of_disabling(self):
+        temp = tempfile.TemporaryDirectory(prefix='mfconductor-launcher-')
+        self.addCleanup(temp.cleanup)
+        conductor = Path(temp.name)
+        script = write_profile_launcher(conductor, 'Example', {'enabled': ['Example']}, ['--port', '8188'])
+        text = script.read_text(encoding='utf-8')
+        self.assertIn('disable_others=False', text)
+        self.assertIn('isolation_launch_flags', text)
+        compile(text, str(script), 'exec')
 
 
 class IsolationFailureTests(unittest.TestCase):

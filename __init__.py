@@ -101,7 +101,7 @@ from .security_utils import (
     valid_pip_package,
     valid_pip_version,
 )
-from .profile_launch import build_profile_args, parse_launch_flags, persist_blocked_packages, workflow_launch_options, write_desktop_shortcut, write_profile_launcher
+from .profile_launch import build_profile_args, isolation_launch_flags, parse_launch_flags, persist_blocked_packages, strip_custom_node_isolation, workflow_launch_options, write_desktop_shortcut, write_profile_launcher
 
 # Global instances
 _scanner = None
@@ -652,22 +652,25 @@ try:
             scanner = get_scanner()
 
             def _apply():
-                results = apply_enabled_folders(
-                    scanner,
-                    folders_for_profile(profile, scanner.list_folder_names()),
-                )
-                if not results['errors']:
-                    persist_blocked_packages(profile.get('excluded_packages') or [])
-                return results
+                enabled = folders_for_profile(profile, scanner.list_folder_names())
+                results = apply_enabled_folders(scanner, enabled, disable_others=False)
+                if results['errors']:
+                    return results, None
+                persist_blocked_packages(profile.get('excluded_packages') or [])
+                launch_flags = strip_custom_node_isolation(build_profile_args(profile)) + isolation_launch_flags(enabled)
+                launcher = write_profile_launcher(MF_CONDUCTOR_DIR, name, profile, launch_flags)
+                return results, launcher
 
             loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(None, _apply)
+            results, launcher = await loop.run_in_executor(None, _apply)
             if results['errors']:
                 return web.json_response({'success': False, 'message': '; '.join(results['errors']), 'results': results})
+            launcher_path = str(launcher.with_suffix('.bat' if os.name == 'nt' else '.sh'))
             return web.json_response({
                 'success': True,
                 'launched': False,
-                'message': f'Applied profile "{name}". Restart ComfyUI to load the isolated node set and excluded packages.',
+                'launcher_path': launcher_path,
+                'message': f'Profile "{name}" is ready. Stop ComfyUI, then run {launcher_path}. It loads this pack list without renaming the other folders.',
                 'results': results,
             })
         except Exception as e:
@@ -860,13 +863,14 @@ try:
                     last = analysis
                     required.extend(analysis.get('required_folders') or [])
                 enabled = folders_for_workflow_launch({'required_folders': required}, get_scanner().list_folder_names(), data.get('extra_nodes') or [])
-                results = apply_enabled_folders(get_scanner(), enabled)
+                results = apply_enabled_folders(get_scanner(), enabled, disable_others=False)
                 if results['errors']:
                     return {'success': False, 'message': '; '.join(results['errors']), 'results': results}
                 persist_blocked_packages(selected_profile.get('excluded_packages') or [])
+                launch_flags = strip_custom_node_isolation(flags) + isolation_launch_flags(enabled)
                 launcher = write_profile_launcher(MF_CONDUCTOR_DIR, 'Workflow launch', {
                     'enabled': enabled, 'excluded_packages': selected_profile.get('excluded_packages') or [],
-                }, flags)
+                }, launch_flags)
                 if persist_pending_workflow:
                     persist_pending_workflow(paths[0], paths)
                 return {
@@ -878,7 +882,7 @@ try:
                     'paths': paths,
                     'launcher_path': str(launcher.with_suffix('.bat' if os.name == 'nt' else '.sh')),
                     'flags': flags,
-                    'message': 'Selection applied. Stop ComfyUI, then run the generated Workflow launch file to use these flags.',
+                    'message': 'Stop ComfyUI, then run the generated Workflow launch file. It loads this pack list without renaming the other folders.',
                 }
 
             loop = asyncio.get_event_loop()

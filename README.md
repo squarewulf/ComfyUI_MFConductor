@@ -70,7 +70,7 @@ The core of the application. Manage launch configurations that control every asp
 * **Launch Flags** - Configure VRAM limits (`--lowvram`), attention modes, and preview methods visually.
 * **Package Exclusion** - Prevent specific Python packages from loading (e.g., `bitsandbytes`) to avoid CUDA conflicts.
 * **Desktop Shortcuts** - Generate Desktop shortcuts for a profile or for MF Conductor itself (Windows `.lnk`, Linux `.desktop`, macOS `.command`).
-* **Workflow Launch** - The Workflows tab reads `ComfyUI/user/default/workflows` and starts ComfyUI with only the custom nodes that graph uses. Standalone launch passes a pack whitelist, so unused folders are not renamed. Flags and any extra excluded packages come from your default profile.
+* **Workflow Launch** - The Workflows tab reads `ComfyUI/user/default/workflows` and starts ComfyUI with only the custom nodes that graph uses. Launch passes a pack whitelist, so unused folders are not renamed. Flags and any extra excluded packages come from your default profile.
 
 ### ❖ Node Management
 
@@ -175,7 +175,7 @@ When a profile is launched, MF Conductor performs the following operations:
 3. Sets `MFCONDUCTOR_BLOCKED_PACKAGES` and writes `data/blocked_packages.txt` so excluded packages look uninstalled to `import` and `importlib.util.find_spec()` on the next start.
 4. Injects selected launch flags (e.g., `--preview-method auto`).
 
-A standalone workflow launch does not rename unused packs. It adds `--disable-all-custom-nodes` and `--whitelist-custom-nodes` so ComfyUI skips them even when an editor has the folder open. Integrated workflow launch still renames folders, then writes a launcher to run after you stop ComfyUI.
+Profile launch, workflow launch, and desktop shortcuts do not rename unused packs. They add `--disable-all-custom-nodes` and `--whitelist-custom-nodes`, so ComfyUI skips those folders even when an editor has them open. A pack that is still named `Name.disabled` is renamed back when it is needed. If that folder is open, MF Conductor leaves it in place and adds a link at `Name` so ComfyUI can load it. Profile Apply still renames folders on disk. Inside ComfyUI, Launch writes a launcher; stop ComfyUI and run that file.
 
 > **Note:** ComfyUI skips folders whose name ends in `.disabled`, and it also skips packs that are not on the whitelist when `--disable-all-custom-nodes` is set. MF Conductor does not patch ComfyUI. The management API is localhost-only.
 
@@ -274,4 +274,4 @@ The Workflows page uses the same search, sort direction, Grid and List controls 
 
 Use **Launch setup** to choose initial profile flags, edit the complete flag text, and select additional installed node packs. These edits do not change the saved profile. Installed Manager, ModelFrisk, MediaFrisk, Crystools, and MFConductor are always included. Other packs load only when a selected workflow needs them or you add them as extras.
 
-Standalone MF Conductor starts ComfyUI with those flags, the selected port, and `--whitelist-custom-nodes`. Packs that are not on that list stay on disk and are not imported. Inside ComfyUI, Launch prepares a launcher file and shows its path; stop ComfyUI and run that file. That launcher renames unused folders to `.disabled`. Restart MF Conductor after updating its Python files, then refresh the browser to load the updated interface.
+Standalone MF Conductor starts ComfyUI with those flags, the selected port, and `--whitelist-custom-nodes`. Packs that are not on that list stay on disk and are not imported. Inside ComfyUI, Launch prepares a launcher file and shows its path; stop ComfyUI and run that file. The launcher uses the same whitelist and does not rename unused folders. Restart MF Conductor after updating its Python files, then refresh the browser to load the updated interface.

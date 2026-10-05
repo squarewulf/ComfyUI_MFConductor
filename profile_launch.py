@@ -142,6 +142,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from node_scanner import NodeScanner
+from profile_launch import isolation_launch_flags, strip_custom_node_isolation
 from workflow_analyzer import apply_enabled_folders, folders_for_profile
 
 PROFILE_NAME = {profile_name!r}
@@ -155,10 +156,10 @@ def apply_node_states(custom_nodes_path):
     scanner = NodeScanner(str(custom_nodes_path))
     profile = {{'enabled': ENABLED_NODES, 'disabled': DISABLED_NODES}}
     enabled = folders_for_profile(profile, scanner.list_folder_names())
-    result = apply_enabled_folders(scanner, enabled)
+    result = apply_enabled_folders(scanner, enabled, disable_others=False)
     if result['errors']:
         raise RuntimeError('; '.join(result['errors']))
-    return result
+    return enabled
 
 def main():
     script_dir = Path(__file__).parent.parent
@@ -166,7 +167,6 @@ def main():
     custom_nodes_path = comfy_root / 'custom_nodes'
     print(f"Launching ComfyUI with profile: {{PROFILE_NAME}}")
     print("Applying node configuration...")
-    apply_node_states(custom_nodes_path)
     python_path = PYTHON_PATH if Path(PYTHON_PATH).exists() else sys.executable
     main_py = comfy_root / 'main.py'
     env = os.environ.copy()
@@ -177,7 +177,8 @@ def main():
         persist.write_text(','.join(EXCLUDED_PACKAGES), encoding='utf-8')
     elif persist.exists():
         persist.unlink()
-    cmd = [str(python_path), str(main_py)] + COMFY_ARGS
+    enabled = apply_node_states(custom_nodes_path)
+    cmd = [str(python_path), str(main_py)] + strip_custom_node_isolation(list(COMFY_ARGS)) + isolation_launch_flags(enabled)
     print(f"Command: {{' '.join(cmd)}}")
     print("-" * 50)
     os.chdir(comfy_root)

@@ -2,7 +2,7 @@
  * MF Conductor - Custom Node Manager
  * Frontend Application
  * 
- * @version 1.4.5
+ * @version 2.0.0
  * @author squarewulf
  */
 

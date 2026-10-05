@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-04
+
+### Changed
+- Profile launch, workflow launch, and desktop shortcuts no longer rename unused packs. ComfyUI is started with `--disable-all-custom-nodes` and `--whitelist-custom-nodes`, including launches from inside ComfyUI.
+- A needed pack that is still `Name.disabled` and locked by another program is left in place. MF Conductor adds a directory link at `Name` so ComfyUI can load it.
+- Version is 2.0.0.
+
 ### Fixed
 - Keep stale pre-launch status responses from stopping terminal polling, and update the status label when ComfyUI becomes ready.
 - Align workflow list rows and standardize search, sort, view, and action controls across collection pages.
@@ -22,9 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Workflow launch setup with editable flags, profile presets, installed utility packs, and optional extra nodes.
 - Isolated regression checks for request security, profile shortcuts, folder preservation, package blocking, and frontend escaping.
-
-### Changed
-- Standalone workflow launch no longer renames unused packs. ComfyUI is started with `--disable-all-custom-nodes` and `--whitelist-custom-nodes`, so an editor can keep those folders open.
 
 ## [1.4.5] - 2026-09-07
 

@@ -1080,6 +1080,22 @@ class CustomNode:
         }
 
 
+def _link_disabled_folder(disabled: Path, live: Path) -> None:
+    """Point the live folder name at a locked Name.disabled directory.
+
+    ComfyUI skips any folder whose name ends in .disabled before it reads the
+    whitelist, and a rename fails while an editor has the directory open.
+    A junction or symlink adds the live name without moving the locked folder.
+    """
+    if live.exists():
+        raise FileExistsError(live)
+    if os.name == 'nt':
+        import _winapi
+        _winapi.CreateJunction(str(disabled), str(live))
+        return
+    os.symlink(disabled, live, target_is_directory=True)
+
+
 def _rename_node_folder(src: Path, dest: Path) -> None:
     """Rename a pack folder, retrying when Windows still has it open.
 
@@ -1380,7 +1396,12 @@ class NodeScanner:
                 self._invalidate_cache(persist=False)
                 return True, f"Activated {name}"
             except PermissionError:
-                return False, f"Permission denied. Close any applications using files in {name}"
+                try:
+                    _link_disabled_folder(target_path, dest)
+                except OSError as exc:
+                    return False, f"Permission denied. Close any applications using files in {name} ({exc})"
+                self._invalidate_cache(persist=False)
+                return True, f"Activated {name} through a link because the folder is open in another program"
             except Exception as e:
                 return False, f"Failed to activate: {e}"
 

@@ -232,17 +232,17 @@ class ProfileTests(unittest.TestCase):
                     for name in ('Example', 'Other.disabled', 'ComfyUI_MFConductor.disabled'):
                         (root / name).mkdir()
                 scanner = NodeScanner(str(roots[0]))
-                apply_enabled_folders(scanner, folders_for_profile(profile, scanner.list_folder_names()))
+                enabled = folders_for_profile(profile, scanner.list_folder_names())
+                apply_enabled_folders(scanner, enabled, disable_others=False)
                 self.load_launcher(profile)['apply_node_states'](roots[1])
                 self.assertEqual(sorted(p.name for p in roots[0].iterdir()), sorted(p.name for p in roots[1].iterdir()))
                 self.assertTrue((roots[1] / 'ComfyUI_MFConductor').is_dir())
-                if index == 0:
-                    self.assertTrue((roots[1] / 'Example.disabled').is_dir())
+                self.assertTrue((roots[1] / 'Example').is_dir())
 
     def test_shortcut_reports_collision_without_deleting(self):
         for name in ('Example', 'Example.disabled'):
             (self.nodes / name).mkdir()
-        launcher = self.load_launcher({'disabled': ['Example']})
+        launcher = self.load_launcher({'enabled': ['Example']})
         with self.assertRaisesRegex(RuntimeError, 'duplicate folders'):
             launcher['apply_node_states'](self.nodes)
         self.assertTrue((self.nodes / 'Example').exists())

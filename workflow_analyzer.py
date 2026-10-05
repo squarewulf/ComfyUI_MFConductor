@@ -381,6 +381,8 @@ def apply_enabled_folders(scanner, enabled_folders: Iterable[str], disable_other
             ok, msg = scanner.activate_node(folder)
             if ok:
                 results['enabled'].append(folder)
+            elif 'duplicate' in msg.lower():
+                results['errors'].append(f'{folder}: {msg}')
             elif 'already' in msg.lower():
                 results['kept'].append(folder)
             elif 'not found' not in msg.lower():
